@@ -16,6 +16,7 @@ import { QueueView } from "@/components/QueueView";
 import { HistoryView } from "@/components/HistoryView";
 import { ToolkitView } from "@/components/ToolkitView";
 import { ScheduleView } from "@/components/ScheduleView";
+import { StudioView } from "@/components/StudioView";
 import { CommandPalette } from "@/components/CommandPalette";
 import type { ActiveView } from "@/lib/types";
 
@@ -37,6 +38,7 @@ const TABS: { id: ActiveView; label: string }[] = [
   { id: "history", label: "History" },
   { id: "toolkit", label: "Toolkit" },
   { id: "schedule", label: "Schedule" },
+  { id: "studio", label: "Studio" },
 ];
 
 const PLATFORMS = ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X"];
@@ -194,6 +196,9 @@ export default function Home() {
 
             {/* ── Schedule view ── */}
             {activeView === "schedule" && <ScheduleView />}
+
+            {/* ── Studio view ── */}
+            {activeView === "studio" && <StudioView />}
           </motion.div>
         </AnimatePresence>
       </main>

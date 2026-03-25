@@ -105,4 +105,4 @@ export interface AiRecommendation {
   tip: string;
 }
 
-export type ActiveView = "download" | "queue" | "history" | "toolkit" | "schedule";
+export type ActiveView = "download" | "queue" | "history" | "toolkit" | "schedule" | "studio";
