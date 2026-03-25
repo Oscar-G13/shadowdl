@@ -188,6 +188,11 @@ async def download_video(
 
 
 def clean_filename(title: str, platform: str, quality: str) -> str:
+    # Strip characters illegal in filenames
     safe = re.sub(r'[\\/*?:"<>|]', "", title).strip()
     safe = re.sub(r"\s+", " ", safe)[:80]
-    return f"{safe} - {platform.capitalize()} - {quality}.mp4"
+    # Remove non-ASCII (emoji, etc.) so the name is safe for HTTP latin-1 headers
+    ascii_safe = safe.encode("ascii", errors="ignore").decode("ascii").strip()
+    if not ascii_safe:
+        ascii_safe = platform.capitalize()
+    return f"{ascii_safe} - {platform.capitalize()} - {quality}.mp4"

@@ -161,8 +161,7 @@ async def serve_file(task_id: str):
     return FileResponse(
         path=file_path,
         media_type="video/mp4",
-        filename=filename,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        filename=filename,  # starlette sets Content-Disposition: attachment from this
     )
 
 
