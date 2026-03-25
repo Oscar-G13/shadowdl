@@ -28,26 +28,21 @@ def detect_platform(url: str) -> str:
     return "unknown"
 
 
-def _build_ydl_opts(platform: str, format_id: str | None = None) -> list[str]:
+def _build_ydl_opts(platform: str, format_selector: str | None = None) -> list[str]:
     """Build yt-dlp CLI args for a given platform."""
     args = ["yt-dlp", "--no-playlist"]
 
-    if platform == "tiktok":
-        # Pull from the watermark-free CDN endpoint
-        args += ["--extractor-args", "tiktok:api_hostname=api16-normal-c-useast1a.tiktokv.com"]
-
-    if format_id:
-        args += ["-f", format_id]
-    else:
-        # Best video+audio merge, fallback to best single file
-        args += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"]
+    # Use the provided selector (always includes audio) or the default best merge
+    selector = format_selector or "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+    args += ["-f", selector]
 
     return args
 
 
 async def fetch_metadata(url: str) -> dict[str, Any]:
     platform = detect_platform(url)
-    args = _build_ydl_opts(platform) + ["--dump-json", url]
+    # --dump-json doesn't need a format selector; use flat args
+    args = ["yt-dlp", "--no-playlist", "--dump-json", url]
 
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -82,59 +77,66 @@ async def fetch_metadata(url: str) -> dict[str, Any]:
 
 
 def _parse_formats(raw_formats: list[dict]) -> list[dict]:
-    """Return a clean, deduplicated list of user-facing format options."""
-    seen_labels: set[str] = set()
+    """
+    Return a clean, deduplicated list of user-facing format options.
+    Each format_id is a yt-dlp selector string (not a raw ID) so that
+    audio is always merged when downloading video streams.
+    """
+    seen_heights: set[int] = set()
     result = []
 
-    # Prefer combined formats first, then video+audio pairs
+    has_audio_only = False
+
     for fmt in reversed(raw_formats):
         vcodec = fmt.get("vcodec", "none")
         acodec = fmt.get("acodec", "none")
         height = fmt.get("height")
-        ext = fmt.get("ext", "mp4")
         filesize = fmt.get("filesize") or fmt.get("filesize_approx")
 
-        if vcodec == "none" and acodec != "none":
-            label = "Audio Only"
-        elif vcodec != "none" and height:
-            label = f"{height}p"
-        else:
-            continue
+        if vcodec == "none" and acodec != "none" and not has_audio_only:
+            has_audio_only = True
+            result.append({
+                "format_id": "bestaudio[ext=m4a]/bestaudio",
+                "label": "Audio Only",
+                "ext": "m4a",
+                "filesize": filesize,
+                "height": None,
+            })
+        elif vcodec != "none" and height and height not in seen_heights:
+            seen_heights.add(height)
+            # Build a selector that forces audio merge — this is what fixes YouTube no-audio
+            selector = (
+                f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]"
+                f"/bestvideo[height<={height}]+bestaudio"
+                f"/best[height<={height}]"
+            )
+            result.append({
+                "format_id": selector,
+                "label": f"{height}p",
+                "ext": "mp4",
+                "filesize": filesize,
+                "height": height,
+            })
 
-        if label in seen_labels:
-            continue
-        seen_labels.add(label)
+    # Sort: highest resolution first, Audio Only last
+    result.sort(key=lambda f: f.get("height") or -1, reverse=True)
 
-        result.append({
-            "format_id": fmt["format_id"],
-            "label": label,
-            "ext": ext,
-            "filesize": filesize,
-            "vcodec": vcodec,
-            "acodec": acodec,
-            "height": height,
-        })
-
-    # Sort: Best quality first, Audio Only last
-    def sort_key(f):
-        if f["label"] == "Audio Only":
-            return -1
-        return f.get("height") or 0
-
-    result.sort(key=sort_key, reverse=True)
-
-    # Always prepend a "Best Quality" option
+    # Prepend "Best Quality" as the default
     if result:
-        best = result[0].copy()
-        best["label"] = "Best Quality"
-        result.insert(0, best)
+        result.insert(0, {
+            "format_id": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+            "label": "Best Quality",
+            "ext": "mp4",
+            "filesize": None,
+            "height": None,
+        })
 
     return result
 
 
 async def download_video(
     url: str,
-    format_id: str,
+    format_id: str,  # actually a selector string, not a raw ID
     task_id: str,
     on_progress: Callable[[dict], Coroutine],
 ) -> Path:

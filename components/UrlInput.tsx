@@ -10,8 +10,8 @@ export function UrlInput() {
   const { url, setUrl, setMetadata, setSelectedFormat, setStatus, setError, reset } = useStore();
   const [localUrl, setLocalUrl] = useState("");
 
-  async function handleSubmit() {
-    const trimmed = localUrl.trim();
+  async function submitUrl(target: string) {
+    const trimmed = target.trim();
     if (!trimmed) return;
 
     reset();
@@ -42,16 +42,14 @@ export function UrlInput() {
   }
 
   function handleKey(e: React.KeyboardEvent) {
-    if (e.key === "Enter") handleSubmit();
+    if (e.key === "Enter") submitUrl(localUrl);
   }
 
-  async function handlePaste(e: React.ClipboardEvent) {
-    const pasted = e.clipboardData.getData("text");
+  function handlePaste(e: React.ClipboardEvent) {
+    const pasted = e.clipboardData.getData("text").trim();
     setLocalUrl(pasted);
-    // Auto-submit after a short delay so the input renders first
-    setTimeout(() => {
-      handleSubmit();
-    }, 100);
+    // Pass the URL directly — React state hasn't flushed yet so localUrl would be stale
+    setTimeout(() => submitUrl(pasted), 50);
   }
 
   return (
@@ -73,7 +71,7 @@ export function UrlInput() {
           autoFocus
         />
         <button
-          onClick={handleSubmit}
+          onClick={() => submitUrl(localUrl)}
           disabled={!localUrl.trim()}
           className="neon-btn-filled mr-3 px-6 py-3 rounded-lg text-sm font-semibold disabled:opacity-20 disabled:cursor-not-allowed shrink-0"
         >
