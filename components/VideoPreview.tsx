@@ -14,14 +14,18 @@ export function VideoPreview() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
-      className="w-full max-w-3xl mx-auto card-dark rounded-xl p-5 flex gap-5"
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      className="glass-card flex gap-5 overflow-hidden"
+      style={{ padding: "20px" }}
     >
       {/* Thumbnail */}
       {metadata.thumbnail && (
-        <div className="relative shrink-0 w-40 h-24 rounded-lg overflow-hidden bg-[#111]">
+        <div
+          className="relative shrink-0 overflow-hidden"
+          style={{ width: 160, height: 100, borderRadius: 10, background: "#111" }}
+        >
           <Image
             src={metadata.thumbnail}
             alt={metadata.title}
@@ -29,31 +33,70 @@ export function VideoPreview() {
             className="object-cover"
             unoptimized
           />
+          {/* Gradient overlay */}
+          <div
+            className="absolute inset-0"
+            style={{ background: "linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%)" }}
+          />
+          {/* Duration badge */}
+          {metadata.duration && (
+            <div
+              className="absolute bottom-2 right-2 font-mono-data"
+              style={{
+                fontSize: "11px",
+                fontWeight: 500,
+                background: "rgba(0,0,0,0.75)",
+                color: "#fff",
+                padding: "2px 6px",
+                borderRadius: 5,
+                backdropFilter: "blur(4px)",
+              }}
+            >
+              {formatDuration(metadata.duration)}
+            </div>
+          )}
         </div>
       )}
 
       {/* Info */}
-      <div className="flex flex-col justify-center gap-2 min-w-0">
+      <div className="flex flex-col justify-center gap-2.5 min-w-0 flex-1">
         {/* Platform badge */}
-        <span
-          className="text-xs font-semibold px-2 py-0.5 rounded-full w-fit"
-          style={{ color: platformColor, border: `1px solid ${platformColor}40`, background: `${platformColor}15` }}
-        >
-          {platformLabel}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              color: platformColor,
+              background: `${platformColor}14`,
+              border: `1px solid ${platformColor}30`,
+              borderRadius: 6,
+              padding: "3px 8px",
+            }}
+          >
+            <span style={{ width: 5, height: 5, borderRadius: "50%", background: platformColor, display: "inline-block", boxShadow: `0 0 6px ${platformColor}` }} />
+            {platformLabel}
+          </span>
+        </div>
 
-        <p className="text-white font-medium text-sm leading-snug line-clamp-2">
+        {/* Title */}
+        <p
+          className="text-white font-medium leading-snug"
+          style={{ fontSize: 14, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
+        >
           {metadata.title}
         </p>
 
-        <div className="flex items-center gap-3 text-xs text-white/40">
-          {metadata.duration && (
-            <span>{formatDuration(metadata.duration)}</span>
-          )}
-          {metadata.uploader && (
-            <span className="truncate">{metadata.uploader}</span>
-          )}
-        </div>
+        {/* Uploader */}
+        {metadata.uploader && (
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {metadata.uploader}
+          </p>
+        )}
       </div>
     </motion.div>
   );

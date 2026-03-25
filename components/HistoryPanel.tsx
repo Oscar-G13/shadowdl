@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "@/lib/store";
 import type { HistoryItem } from "@/lib/types";
-import { PLATFORM_LABELS } from "@/lib/platform";
+import { PLATFORM_LABELS, PLATFORM_COLORS } from "@/lib/platform";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -25,7 +25,8 @@ export function HistoryPanel() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="text-sm text-white/40 hover:text-white/80 transition-colors"
+        className="btn-ghost"
+        style={{ fontSize: 12, padding: "5px 10px" }}
       >
         History
       </button>
@@ -38,8 +39,14 @@ export function HistoryPanel() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
               onClick={() => setOpen(false)}
-              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40"
+              style={{
+                position: "fixed", inset: 0,
+                background: "rgba(0,0,0,0.75)",
+                backdropFilter: "blur(8px)",
+                zIndex: 40,
+              }}
             />
 
             {/* Drawer */}
@@ -47,24 +54,83 @@ export function HistoryPanel() {
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="fixed right-0 top-0 h-full w-80 bg-[#070707] border-l border-[#1a1a1a] z-50 flex flex-col"
+              transition={{ type: "spring", damping: 28, stiffness: 260 }}
+              style={{
+                position: "fixed", right: 0, top: 0,
+                height: "100%", width: 340,
+                background: "#050505",
+                borderLeft: "1px solid rgba(255,255,255,0.06)",
+                zIndex: 50,
+                display: "flex", flexDirection: "column",
+              }}
             >
-              <div className="flex items-center justify-between p-5 border-b border-[#1a1a1a]">
-                <h2 className="font-semibold text-sm text-white">Recent Downloads</h2>
+              {/* Header */}
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "20px 24px",
+                borderBottom: "1px solid rgba(255,255,255,0.05)",
+              }}>
+                <div>
+                  <p className="font-display" style={{ fontSize: 13, letterSpacing: "0.1em", color: "rgba(255,255,255,0.9)" }}>
+                    HISTORY
+                  </p>
+                  {history.length > 0 && (
+                    <p style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginTop: 2 }}>
+                      {history.length} download{history.length !== 1 ? "s" : ""}
+                    </p>
+                  )}
+                </div>
                 <button
                   onClick={() => setOpen(false)}
-                  className="text-white/30 hover:text-white transition-colors text-lg leading-none"
+                  style={{
+                    width: 28, height: 28,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: 8,
+                    color: "rgba(255,255,255,0.4)",
+                    cursor: "pointer",
+                    fontSize: 16,
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.9)";
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.2)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.4)";
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.08)";
+                  }}
                 >
                   ×
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto">
+              {/* List */}
+              <div style={{ flex: 1, overflowY: "auto" }}>
                 {history.length === 0 ? (
-                  <p className="text-white/20 text-sm text-center mt-10">No downloads yet.</p>
+                  <div style={{ padding: "60px 24px", textAlign: "center" }}>
+                    <div style={{ marginBottom: 12, opacity: 0.15 }}>
+                      <svg width="32" height="32" viewBox="0 0 32 32" fill="none" style={{ margin: "0 auto" }}>
+                        <circle cx="16" cy="16" r="13" stroke="#00ffff" strokeWidth="1"/>
+                        <path d="M16 9v7l4 4" stroke="#00ffff" strokeWidth="1.5" strokeLinecap="round"/>
+                      </svg>
+                    </div>
+                    <p style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", letterSpacing: "0.05em" }}>
+                      No downloads yet
+                    </p>
+                  </div>
                 ) : (
-                  history.map((item) => <HistoryRow key={item.id} item={item} />)
+                  history.map((item, i) => (
+                    <motion.div
+                      key={item.id}
+                      initial={{ opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.2, delay: i * 0.04 }}
+                    >
+                      <HistoryRow item={item} />
+                    </motion.div>
+                  ))
                 )}
               </div>
             </motion.div>
@@ -81,20 +147,66 @@ function HistoryRow({ item }: { item: HistoryItem }) {
     day: "numeric",
   });
 
+  const platformLabel = PLATFORM_LABELS[item.platform as keyof typeof PLATFORM_LABELS] ?? item.platform;
+  const platformColor = PLATFORM_COLORS[item.platform as keyof typeof PLATFORM_COLORS] ?? "#888";
+
   return (
-    <div className="px-5 py-4 border-b border-[#111] hover:bg-[#0d0d0d] transition-colors">
-      <p className="text-sm text-white/80 truncate">{item.title}</p>
-      <div className="flex items-center gap-2 mt-1 text-xs text-white/30">
-        <span>{PLATFORM_LABELS[item.platform as keyof typeof PLATFORM_LABELS] ?? item.platform}</span>
-        <span>·</span>
-        <span>{item.quality}</span>
-        <span>·</span>
-        <span>{date}</span>
+    <div
+      style={{
+        padding: "14px 24px",
+        borderBottom: "1px solid rgba(255,255,255,0.03)",
+        transition: "background 0.15s",
+        cursor: "default",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.02)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    >
+      <p style={{
+        fontSize: 13, color: "rgba(255,255,255,0.75)",
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        marginBottom: 6,
+      }}>
+        {item.title}
+      </p>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {/* Platform pill */}
+        <span style={{
+          display: "inline-flex", alignItems: "center", gap: 4,
+          fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          color: platformColor,
+          background: `${platformColor}14`,
+          border: `1px solid ${platformColor}30`,
+          borderRadius: 4,
+          padding: "2px 6px",
+        }}>
+          <span style={{ width: 4, height: 4, borderRadius: "50%", background: platformColor, display: "inline-block" }} />
+          {platformLabel}
+        </span>
+
+        {/* Quality */}
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "var(--font-mono)" }}>
+          {item.quality}
+        </span>
+
+        {/* Date */}
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.15)", marginLeft: "auto" }}>
+          {date}
+        </span>
+
+        {/* Drive badge */}
         {item.saved_to_drive === 1 && (
-          <>
-            <span>·</span>
-            <span className="text-[#00ffff]/60">Drive</span>
-          </>
+          <span style={{
+            fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
+            color: "rgba(0,255,255,0.6)",
+            background: "rgba(0,255,255,0.06)",
+            border: "1px solid rgba(0,255,255,0.15)",
+            borderRadius: 4,
+            padding: "2px 6px",
+          }}>
+            DRIVE
+          </span>
         )}
       </div>
     </div>

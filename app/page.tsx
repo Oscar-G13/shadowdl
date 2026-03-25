@@ -2,7 +2,7 @@
 
 import { useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { UrlInput } from "@/components/UrlInput";
 import { VideoPreview } from "@/components/VideoPreview";
@@ -13,103 +13,129 @@ import { FetchingState } from "@/components/FetchingState";
 import { DriveConnect } from "@/components/DriveConnect";
 import { HistoryPanel } from "@/components/HistoryPanel";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-// Handles the ?drive=connected query param that the OAuth callback redirects to
 function DriveCallbackHandler() {
   const params = useSearchParams();
   const { setDriveStatus } = useStore();
-
   useEffect(() => {
     if (params.get("drive") === "connected") {
-      const email = params.get("email") ?? null;
-      setDriveStatus(true, email);
-      // Clean the URL
+      setDriveStatus(true, params.get("email") ?? null);
       window.history.replaceState({}, "", "/");
     }
   }, [params, setDriveStatus]);
-
   return null;
 }
 
+const PLATFORMS = ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X"];
+
 export default function Home() {
   const { status, metadata } = useStore();
-  const showVideoInfo = metadata && (status === "ready" || status === "downloading" || status === "uploading" || status === "done" || status === "error");
+  const isIdle = status === "idle";
+  const showVideoInfo = metadata && ["ready", "downloading", "uploading", "done", "error"].includes(status);
 
   return (
-    <div className="min-h-screen bg-black flex flex-col">
-      {/* Top bar */}
-      <header className="flex items-center justify-between px-8 py-5 border-b border-[#0d0d0d]">
+    <div className="min-h-screen flex flex-col">
+
+      {/* ── Header ─────────────────────────────────────────── */}
+      <header className="flex items-center justify-between px-8 py-5" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
         <motion.div
-          initial={{ opacity: 0, x: -10 }}
+          initial={{ opacity: 0, x: -8 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.4 }}
-          className="flex items-center gap-2"
+          transition={{ duration: 0.5 }}
+          className="flex items-center gap-3"
         >
-          <span className="text-[#00ffff] font-bold text-xl tracking-tight glow-text">Shadow</span>
-          <span className="text-white font-bold text-xl tracking-tight">DL</span>
+          {/* Logo mark */}
+          <div className="relative w-7 h-7 flex items-center justify-center">
+            <div className="absolute inset-0 border border-[#00ffff] opacity-40" style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }} />
+            <div className="w-2 h-2 rounded-sm bg-[#00ffff]" style={{ boxShadow: "0 0 8px #00ffff" }} />
+          </div>
+          <span className="font-display text-lg tracking-widest uppercase" style={{ letterSpacing: "0.2em" }}>
+            <span className="text-cyan glow-cyan">Shadow</span>
+            <span className="text-white opacity-90">DL</span>
+          </span>
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, x: 10 }}
+          initial={{ opacity: 0, x: 8 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.4 }}
-          className="flex items-center gap-5"
+          transition={{ duration: 0.5 }}
+          className="flex items-center gap-6"
         >
           <HistoryPanel />
           <DriveConnect />
         </motion.div>
       </header>
 
-      {/* Main content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-16 gap-8">
-        {/* Hero headline — fades out once we have a video */}
-        {status === "idle" && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.5 }}
-            className="text-center space-y-2 mb-4"
-          >
-            <h1 className="text-4xl font-bold tracking-tight">
-              Download anything.{" "}
-              <span className="text-[#00ffff] glow-text">Instantly.</span>
-            </h1>
-            <p className="text-white/30 text-sm">
-              YouTube · TikTok · Instagram · Facebook · Reddit · X
-            </p>
-          </motion.div>
-        )}
+      {/* ── Main ───────────────────────────────────────────── */}
+      <main className="flex-1 flex flex-col items-center justify-center px-6 pb-20" style={{ gap: "28px" }}>
 
-        {/* URL input */}
+        {/* Hero text — only when idle */}
+        <AnimatePresence>
+          {isIdle && (
+            <motion.div
+              initial={{ opacity: 0, y: -16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8, transition: { duration: 0.2 } }}
+              transition={{ duration: 0.6 }}
+              className="text-center"
+              style={{ marginBottom: "4px" }}
+            >
+              <h1
+                className="font-display text-5xl tracking-tight leading-none mb-4"
+                style={{ letterSpacing: "-0.02em" }}
+              >
+                Download{" "}
+                <span className="text-cyan glow-cyan">anything</span>
+                <span className="text-white opacity-30">.</span>
+              </h1>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                {PLATFORMS.map((p, i) => (
+                  <span
+                    key={p}
+                    className="label-xs"
+                    style={{ animationDelay: `${i * 0.08}s` }}
+                  >
+                    {p}{i < PLATFORMS.length - 1 && <span className="ml-2 opacity-30">·</span>}
+                  </span>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* URL input — always visible */}
         <UrlInput />
 
-        {/* Loading dots */}
+        {/* Fetching state */}
         <FetchingState />
 
-        {/* Video info + quality selector */}
-        {showVideoInfo && (
-          <>
-            <VideoPreview />
-            <QualitySelector />
-            <DownloadButton />
-          </>
-        )}
+        {/* Video result */}
+        <AnimatePresence>
+          {showVideoInfo && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+              className="w-full max-w-2xl mx-auto flex flex-col"
+              style={{ gap: "16px" }}
+            >
+              <VideoPreview />
+              <QualitySelector />
+              <DownloadButton />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Progress / success / error */}
         <ProgressTracker />
       </main>
 
-      {/* Footer */}
-      <footer className="text-center pb-6 text-[10px] text-white/10 tracking-widest uppercase">
-        ShadowDL — No watermarks. No streaming.
+      {/* ── Footer ─────────────────────────────────────────── */}
+      <footer className="text-center py-5" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+        <span className="label-xs opacity-50">No watermarks · No streaming · No bullshit</span>
       </footer>
 
-      {/* Handles ?drive=connected redirect */}
-      <Suspense>
-        <DriveCallbackHandler />
-      </Suspense>
+      <Suspense><DriveCallbackHandler /></Suspense>
     </div>
   );
 }

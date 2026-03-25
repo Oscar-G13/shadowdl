@@ -8,7 +8,6 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export function DriveConnect() {
   const { driveConnected, driveEmail, setDriveStatus } = useStore();
 
-  // Check Drive connection status on mount
   useEffect(() => {
     fetch(`${API}/api/auth/status`)
       .then((r) => r.json())
@@ -30,31 +29,28 @@ export function DriveConnect() {
   if (driveConnected && driveEmail) {
     return (
       <div className="flex items-center gap-3">
-        <span className="text-xs text-white/50">{driveEmail}</span>
-        <button
-          onClick={disconnect}
-          className="neon-btn text-xs px-3 py-1 rounded"
-        >
-          Disconnect Drive
+        <div className="flex items-center gap-1.5">
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#00ff88", boxShadow: "0 0 6px #00ff88" }} />
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{driveEmail}</span>
+        </div>
+        <button onClick={disconnect} className="btn-outline" style={{ padding: "5px 12px", fontSize: 12 }}>
+          Disconnect
         </button>
       </div>
     );
   }
 
   return (
-    <button
-      onClick={connect}
-      className="neon-btn text-sm px-4 py-2 rounded flex items-center gap-2"
-    >
+    <button onClick={connect} className="btn-outline flex items-center gap-2">
       <GoogleDriveIcon />
-      Connect Google Drive
+      Google Drive
     </button>
   );
 }
 
 function GoogleDriveIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 87.3 78" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width="14" height="13" viewBox="0 0 87.3 78" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
       <path d="M43.65 25L29.9 1.2C28.55 2 27.4 3.1 26.6 4.5L1.2 48.55A9 9 0 000 53.05h27.5z" fill="#00ac47"/>
       <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.8l5.85 11.05z" fill="#ea4335"/>

@@ -11,45 +11,68 @@ export function QualitySelector() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: 0.1 }}
-      className="w-full max-w-3xl mx-auto space-y-4"
+      transition={{ duration: 0.35, delay: 0.05 }}
+      className="flex flex-col"
+      style={{ gap: "14px" }}
     >
-      {/* Format cards */}
-      <div className="flex flex-wrap gap-2">
+      {/* Label */}
+      <p className="label-xs" style={{ paddingLeft: 2 }}>Quality</p>
+
+      {/* Pills */}
+      <div className="flex flex-wrap" style={{ gap: 8 }}>
         {metadata.formats.map((fmt) => {
-          const isSelected = selectedFormat?.format_id === fmt.format_id;
+          const isActive = selectedFormat?.format_id === fmt.format_id;
           return (
             <button
               key={fmt.format_id}
               onClick={() => setSelectedFormat(fmt)}
-              className={`card-dark rounded-lg px-4 py-3 text-left transition-all ${isSelected ? "selected" : ""}`}
+              className={`quality-pill ${isActive ? "active" : ""}`}
+              style={{ padding: "10px 16px", textAlign: "left" }}
             >
-              <div className="text-sm font-semibold" style={{ color: isSelected ? "#00ffff" : "#fff" }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: isActive ? "#00ffff" : "#fff",
+                  letterSpacing: "0.02em",
+                }}
+              >
                 {fmt.label}
               </div>
               {fmt.filesize && (
-                <div className="text-xs text-white/30 mt-0.5">{formatBytes(fmt.filesize)}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>
+                  {formatBytes(fmt.filesize)}
+                </div>
               )}
             </button>
           );
         })}
       </div>
 
-      {/* Google Drive toggle — only visible if Drive is connected */}
+      {/* Drive toggle */}
       {driveConnected && (
-        <label className="flex items-center gap-3 cursor-pointer w-fit">
+        <div
+          className="flex items-center gap-3 cursor-pointer w-fit"
+          onClick={() => setSaveToDrive(!saveToDrive)}
+          style={{ userSelect: "none" }}
+        >
+          {/* Track */}
           <div
-            onClick={() => setSaveToDrive(!saveToDrive)}
-            className={`relative w-10 h-5 rounded-full transition-colors ${saveToDrive ? "bg-[#00ffff]" : "bg-[#1a1a1a] border border-[#333]"}`}
+            className="toggle-track"
+            style={{ background: saveToDrive ? "#00ffff" : "rgba(255,255,255,0.08)", border: saveToDrive ? "none" : "1px solid rgba(255,255,255,0.12)" }}
           >
             <div
-              className={`absolute top-0.5 w-4 h-4 rounded-full bg-black transition-transform ${saveToDrive ? "translate-x-5" : "translate-x-0.5"}`}
+              className="toggle-thumb"
+              style={{
+                background: saveToDrive ? "#000" : "rgba(255,255,255,0.4)",
+                transform: saveToDrive ? "translateX(16px)" : "translateX(0px)",
+              }}
             />
           </div>
-          <span className="text-sm text-white/60">Save directly to Google Drive</span>
-        </label>
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Save to Google Drive</span>
+        </div>
       )}
     </motion.div>
   );

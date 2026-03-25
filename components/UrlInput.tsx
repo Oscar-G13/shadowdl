@@ -7,7 +7,7 @@ import { useStore } from "@/lib/store";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export function UrlInput() {
-  const { url, setUrl, setMetadata, setSelectedFormat, setStatus, setError, reset } = useStore();
+  const { setUrl, setMetadata, setSelectedFormat, setStatus, setError, reset } = useStore();
   const [localUrl, setLocalUrl] = useState("");
 
   async function submitUrl(target: string) {
@@ -48,36 +48,70 @@ export function UrlInput() {
   function handlePaste(e: React.ClipboardEvent) {
     const pasted = e.clipboardData.getData("text").trim();
     setLocalUrl(pasted);
-    // Pass the URL directly — React state hasn't flushed yet so localUrl would be stale
     setTimeout(() => submitUrl(pasted), 50);
   }
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-      className="w-full max-w-3xl mx-auto"
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      className="w-full max-w-2xl mx-auto"
     >
-      <div className="neon-border rounded-xl overflow-hidden flex items-center bg-[#080808]">
+      <div className="input-shell flex items-center" style={{ padding: "6px 6px 6px 24px" }}>
+        {/* Subtle left indicator */}
+        <div
+          className="shrink-0 w-1.5 h-1.5 rounded-full mr-4"
+          style={{ background: "#00ffff", boxShadow: "0 0 8px #00ffff", animation: "glow-pulse 2s ease-in-out infinite" }}
+        />
+
         <input
           type="text"
           value={localUrl}
           onChange={(e) => setLocalUrl(e.target.value)}
           onKeyDown={handleKey}
           onPaste={handlePaste}
-          placeholder="Paste video URL here…"
-          className="flex-1 bg-transparent text-white text-lg px-6 py-5 outline-none placeholder:text-white/20 font-light"
+          placeholder="Paste a video URL…"
           autoFocus
+          className="flex-1 bg-transparent text-white outline-none font-light"
+          style={{
+            fontSize: "16px",
+            letterSpacing: "0.01em",
+            caretColor: "#00ffff",
+          }}
         />
+
+        {/* Placeholder styled separately via CSS — input has its own */}
         <button
           onClick={() => submitUrl(localUrl)}
           disabled={!localUrl.trim()}
-          className="neon-btn-filled mr-3 px-6 py-3 rounded-lg text-sm font-semibold disabled:opacity-20 disabled:cursor-not-allowed shrink-0"
+          style={{
+            background: localUrl.trim() ? "#00ffff" : "rgba(255,255,255,0.06)",
+            color: localUrl.trim() ? "#000" : "rgba(255,255,255,0.2)",
+            border: "none",
+            borderRadius: "10px",
+            padding: "12px 22px",
+            fontSize: "13px",
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            cursor: localUrl.trim() ? "pointer" : "not-allowed",
+            transition: "all 0.2s ease",
+            boxShadow: localUrl.trim() ? "0 0 16px rgba(0,255,255,0.3)" : "none",
+            flexShrink: 0,
+          }}
         >
-          Fetch
+          Go
         </button>
       </div>
+
+      {/* Subtle hint */}
+      <p
+        className="text-center mt-3"
+        style={{ fontSize: "12px", color: "rgba(255,255,255,0.18)", letterSpacing: "0.04em" }}
+      >
+        Supports YouTube · TikTok · Instagram · Facebook · Reddit · X
+      </p>
     </motion.div>
   );
 }
