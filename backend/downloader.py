@@ -39,10 +39,13 @@ def _build_ydl_opts(platform: str, format_selector: str | None = None) -> list[s
     return args
 
 
-async def fetch_metadata(url: str) -> dict[str, Any]:
+async def fetch_metadata(url: str, allow_playlist: bool = False) -> dict[str, Any]:
     platform = detect_platform(url)
-    # --dump-json doesn't need a format selector; use flat args
-    args = ["yt-dlp", "--no-playlist", "--dump-json", url]
+
+    if allow_playlist:
+        args = ["yt-dlp", "--flat-playlist", "--dump-json", url]
+    else:
+        args = ["yt-dlp", "--no-playlist", "--dump-json", url]
 
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -61,11 +64,19 @@ async def fetch_metadata(url: str) -> dict[str, Any]:
             raise ValueError("This URL is not supported.")
         raise ValueError(f"Could not fetch video info: {err[:200]}")
 
-    data = json.loads(stdout.decode())
+    raw = stdout.decode()
+
+    # When --flat-playlist is used yt-dlp may output multiple JSON lines (one per entry)
+    # We attempt to parse each line; if the first line looks like a playlist, collect extra fields.
+    lines = [l.strip() for l in raw.splitlines() if l.strip()]
+    if not lines:
+        raise ValueError("No data returned from yt-dlp.")
+
+    data = json.loads(lines[0])
 
     formats = _parse_formats(data.get("formats", []))
 
-    return {
+    result: dict[str, Any] = {
         "title": data.get("title", "Untitled"),
         "thumbnail": data.get("thumbnail"),
         "duration": data.get("duration"),
@@ -74,6 +85,15 @@ async def fetch_metadata(url: str) -> dict[str, Any]:
         "formats": formats,
         "raw_id": data.get("id"),
     }
+
+    if allow_playlist:
+        # _type == "playlist" indicates this is a playlist result
+        is_playlist = data.get("_type") == "playlist"
+        result["is_playlist"] = is_playlist
+        result["playlist_count"] = data.get("playlist_count") or (len(lines) if is_playlist else None)
+        result["playlist_title"] = data.get("title") if is_playlist else None
+
+    return result
 
 
 def _parse_formats(raw_formats: list[dict]) -> list[dict]:
@@ -139,10 +159,14 @@ async def download_video(
     format_id: str,  # actually a selector string, not a raw ID
     task_id: str,
     on_progress: Callable[[dict], Coroutine],
+    proxy: str | None = None,
 ) -> Path:
     """Download video to tmp dir, streaming progress via callback."""
     platform = detect_platform(url)
     args = _build_ydl_opts(platform, format_id)
+
+    if proxy:
+        args += ["--proxy", proxy]
 
     output_template = str(TMP_DIR / f"{task_id}.%(ext)s")
     args += [
@@ -185,6 +209,91 @@ async def download_video(
         raise RuntimeError("Download finished but output file not found.")
 
     return matches[0]
+
+
+async def download_playlist(
+    url: str,
+    format_id: str,
+    output_dir: str,
+    on_progress: Callable[[dict], Coroutine],
+    proxy: str | None = None,
+) -> None:
+    """Download all videos in a playlist to output_dir."""
+    platform = detect_platform(url)
+    selector = format_id or "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+
+    args = [
+        "yt-dlp",
+        "--yes-playlist",
+        "-f", selector,
+        "--newline",
+        "--progress",
+        "--merge-output-format", "mp4",
+        "-o", str(Path(output_dir) / "%(uploader)s" / "%(title)s.%(ext)s"),
+    ]
+
+    if proxy:
+        args += ["--proxy", proxy]
+
+    args.append(url)
+
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+    progress_re = re.compile(
+        r"\[download\]\s+([\d.]+)%\s+of\s+[\S]+\s+at\s+([\S]+)\s+ETA\s+([\S]+)"
+    )
+
+    async for line in proc.stdout:
+        text = line.decode(errors="replace").strip()
+        match = progress_re.search(text)
+        if match:
+            await on_progress({
+                "type": "progress",
+                "percent": float(match.group(1)),
+                "speed": match.group(2),
+                "eta": match.group(3),
+            })
+
+    await proc.wait()
+
+    if proc.returncode != 0:
+        raise RuntimeError("Playlist download failed — yt-dlp exited with an error.")
+
+
+async def download_subtitles(url: str, task_id: str) -> Path | None:
+    """
+    Download subtitles for a video (auto-generated or manual).
+    Returns the path to the .srt file if found, or None.
+    """
+    output_template = str(TMP_DIR / f"{task_id}.%(ext)s")
+
+    args = [
+        "yt-dlp",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-format", "srt",
+        "--skip-download",
+        "--no-playlist",
+        "-o", output_template,
+        url,
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    await proc.communicate()
+
+    # yt-dlp names subtitle files like: <task_id>.<lang>.srt
+    matches = list(TMP_DIR.glob(f"{task_id}*.srt"))
+    if matches:
+        return matches[0]
+    return None
 
 
 def clean_filename(title: str, platform: str, quality: str) -> str:
