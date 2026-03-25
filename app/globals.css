@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background-color: #000000;
+    color: #ffffff;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    height: 100%;
+  }
+
+  ::selection {
+    background-color: #00ffff30;
+    color: #00ffff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #000;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #00ffff40;
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #00ffff80;
+  }
+}
+
+@layer utilities {
+  .neon-border {
+    border: 1px solid #00ffff60;
+  }
+
+  .neon-border:focus-within {
+    border-color: #00ffff;
+    box-shadow: 0 0 0 1px #00ffff, 0 0 20px #00ffff30;
+  }
+
+  .neon-btn {
+    border: 1px solid #00ffff;
+    color: #00ffff;
+    background: transparent;
+    transition: all 0.2s ease;
+  }
+
+  .neon-btn:hover {
+    background: #00ffff10;
+    box-shadow: 0 0 16px #00ffff50, inset 0 0 16px #00ffff08;
+  }
+
+  .neon-btn-filled {
+    background: #00ffff;
+    color: #000;
+    font-weight: 700;
+    transition: all 0.2s ease;
+  }
+
+  .neon-btn-filled:hover {
+    background: #00e5e5;
+    box-shadow: 0 0 24px #00ffff80, 0 0 48px #00ffff30;
+  }
+
+  .neon-btn-filled:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .glow-text {
+    text-shadow: 0 0 10px #00ffff80;
+  }
+
+  .card-dark {
+    background: #0a0a0a;
+    border: 1px solid #1a1a1a;
+    transition: border-color 0.2s;
+  }
+
+  .card-dark:hover {
+    border-color: #00ffff40;
+  }
+
+  .card-dark.selected {
+    border-color: #00ffff;
+    box-shadow: 0 0 12px #00ffff30;
+  }
+}
