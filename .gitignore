@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+.next/
+out/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Secrets & tokens
+*.token
+tokens.db
+shadowdl.db
+
+# Temp downloads
+backend/tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
