@@ -21,6 +21,7 @@ import drive
 import ai_assistant
 import video_toolkit
 import scheduler_service
+import studio
 
 app = FastAPI(title="ShadowDL API")
 
@@ -549,3 +550,101 @@ async def remove_schedule(schedule_id: int):
 @app.get("/api/analytics")
 async def get_analytics():
     return await database.get_analytics()
+
+
+# ── Shadow Studio ──────────────────────────────────────────────────────────────
+
+class StudioTranscribeRequest(BaseModel):
+    file_path: str
+
+
+@app.post("/api/studio/transcribe")
+async def studio_transcribe(req: StudioTranscribeRequest):
+    if not Path(req.file_path).exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+    task_id = str(uuid.uuid4())
+    asyncio.create_task(studio.transcribe_video(req.file_path, task_id))
+    return {"task_id": task_id}
+
+
+@app.get("/api/studio/transcribe-status/{task_id}")
+async def studio_transcribe_status(task_id: str):
+    task = studio.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return task
+
+
+class StudioBurnRequest(BaseModel):
+    file_path: str
+    segments: list[dict]
+    style: str = "default"
+
+
+@app.post("/api/studio/burn")
+async def studio_burn(req: StudioBurnRequest):
+    if not Path(req.file_path).exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+    task_id = str(uuid.uuid4())
+    asyncio.create_task(studio.burn_subtitles(req.file_path, req.segments, req.style, task_id))
+    return {"task_id": task_id}
+
+
+class StudioExportRequest(BaseModel):
+    file_path: str
+    edits: dict
+
+
+@app.post("/api/studio/export")
+async def studio_export(req: StudioExportRequest):
+    if not Path(req.file_path).exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+    task_id = str(uuid.uuid4())
+    asyncio.create_task(studio.export_edit(req.file_path, req.edits, task_id))
+    return {"task_id": task_id}
+
+
+class StudioMagicRequest(BaseModel):
+    file_path: str
+    preset: str  # viral_tiktok, youtube_short, podcast_clean
+
+
+@app.post("/api/studio/magic")
+async def studio_magic(req: StudioMagicRequest):
+    if not Path(req.file_path).exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+    task_id = str(uuid.uuid4())
+
+    if req.preset == "viral_tiktok":
+        asyncio.create_task(studio.magic_viral_tiktok(req.file_path, task_id))
+    elif req.preset == "youtube_short":
+        asyncio.create_task(studio.magic_youtube_short(req.file_path, task_id))
+    elif req.preset == "podcast_clean":
+        asyncio.create_task(studio.magic_podcast_clean(req.file_path, task_id))
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown preset: {req.preset}")
+
+    return {"task_id": task_id}
+
+
+@app.get("/api/studio/status/{task_id}")
+async def studio_status(task_id: str):
+    task = studio.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return task
+
+
+@app.get("/api/studio/file/{task_id}")
+async def studio_file(task_id: str):
+    task = studio.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if task.get("status") != "done":
+        raise HTTPException(status_code=400, detail="Task not complete.")
+    output = task.get("output")
+    if not output or not Path(output).exists():
+        raise HTTPException(status_code=404, detail="Output file not found.")
+    ext = task.get("ext", "mp4")
+    media_type = "audio/mpeg" if ext == "mp3" else "video/mp4"
+    return FileResponse(path=output, filename=Path(output).name, media_type=media_type)
