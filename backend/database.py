@@ -14,9 +14,16 @@ async def init_db():
                 quality TEXT NOT NULL,
                 url TEXT NOT NULL,
                 downloaded_at TEXT DEFAULT (datetime('now')),
-                saved_to_drive INTEGER DEFAULT 0
+                saved_to_drive INTEGER DEFAULT 0,
+                thumbnail TEXT
             )
         """)
+        # Migration: add thumbnail column to existing databases
+        try:
+            await db.execute("ALTER TABLE history ADD COLUMN thumbnail TEXT")
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
         await db.execute("""
             CREATE TABLE IF NOT EXISTS oauth_tokens (
                 id INTEGER PRIMARY KEY,
