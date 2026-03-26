@@ -31,6 +31,7 @@ _tasks: dict[str, dict] = {}
 @app.on_event("startup")
 async def startup():
     await database.init_db()
+    asyncio.create_task(downloader.update_ytdlp())  # non-blocking, fire-and-forget
 
 
 # ── Metadata ───────────────────────────────────────────────────────────────────

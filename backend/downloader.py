@@ -296,6 +296,21 @@ async def download_subtitles(url: str, task_id: str) -> Path | None:
     return None
 
 
+async def update_ytdlp() -> str:
+    """Run yt-dlp -U on startup. Non-fatal — runs fire-and-forget."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "yt-dlp", "-U",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        lines = stdout.decode(errors="replace").strip().splitlines()
+        return lines[-1] if lines else "yt-dlp is up to date."
+    except Exception as e:
+        return f"yt-dlp update skipped: {e}"
+
+
 def clean_filename(title: str, platform: str, quality: str) -> str:
     # Strip characters illegal in filenames
     safe = re.sub(r'[\\/*?:"<>|]', "", title).strip()
