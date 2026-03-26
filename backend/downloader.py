@@ -60,65 +60,161 @@ def _build_ydl_opts(
     return args
 
 
-async def fetch_metadata(url: str, allow_playlist: bool = False, cookies_path: str | None = None) -> dict[str, Any]:
+def _parse_flat_entry(entry: dict, platform: str) -> dict:
+    """Convert a yt-dlp flat-playlist entry to a MultiEntry dict."""
+    url = entry.get("url") or entry.get("webpage_url") or ""
+    thumbnails = entry.get("thumbnails") or []
+    thumbnail = (
+        entry.get("thumbnail")
+        or (thumbnails[0].get("url") if thumbnails else None)
+    )
+    return {
+        "id": entry.get("id") or url,
+        "url": url,
+        "title": entry.get("title") or "Untitled",
+        "thumbnail": thumbnail,
+        "duration": entry.get("duration"),
+        "uploader": entry.get("uploader") or entry.get("channel"),
+    }
+
+
+def _bs4_scrape_videos(url: str) -> list[dict]:
+    """Synchronous BeautifulSoup fallback — finds raw <video>/<source> tags."""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        resp = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(resp.text, "html.parser")
+        entries: list[dict] = []
+        seen: set[str] = set()
+        for tag in soup.find_all(["video", "source"]):
+            src = tag.get("src") or tag.get("data-src") or ""
+            if not src or not src.startswith("http") or src in seen:
+                continue
+            seen.add(src)
+            entries.append({
+                "id": src,
+                "url": src,
+                "title": tag.get("title") or f"Video {len(entries) + 1}",
+                "thumbnail": None,
+                "duration": None,
+                "uploader": None,
+            })
+        return entries
+    except Exception:
+        return []
+
+
+def _raise_ytdlp_error(stderr: str) -> None:
+    if "Private video" in stderr or "This video is private" in stderr:
+        raise ValueError("This video is private.")
+    if "age" in stderr.lower() and "restricted" in stderr.lower():
+        raise ValueError("Age-restricted content — try importing browser cookies.")
+    if "not supported" in stderr.lower() or "unsupported url" in stderr.lower():
+        raise ValueError("URL not supported — no video found on this page.")
+    raise ValueError(f"Could not fetch video info: {stderr[:300]}")
+
+
+async def fetch_metadata(
+    url: str,
+    allow_playlist: bool = False,
+    cookies_path: str | None = None,
+) -> dict[str, Any]:
     platform = detect_platform(url)
 
-    base = ["yt-dlp"]
+    base: list[str] = ["yt-dlp"]
     if cookies_path and Path(cookies_path).exists():
         base += ["--cookies", cookies_path]
 
-    if allow_playlist:
-        args = base + ["--flat-playlist", "--dump-json", url]
-    else:
-        args = base + ["--no-playlist", "--dump-json", url]
-
+    # ── Attempt 1: single video (existing path) ────────────────────────────
     proc = await asyncio.create_subprocess_exec(
-        *args,
+        *base, "--no-playlist", "--dump-json", url,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, stderr = await proc.communicate()
 
-    if proc.returncode != 0:
-        err = stderr.decode(errors="replace")
-        if "Private video" in err or "This video is private" in err:
-            raise ValueError("This video is private.")
-        if "age" in err.lower() and "restricted" in err.lower():
-            raise ValueError("Age-restricted content — cannot download.")
-        if "not supported" in err.lower() or "unsupported url" in err.lower():
-            raise ValueError("This URL is not supported.")
-        raise ValueError(f"Could not fetch video info: {err[:200]}")
+    if proc.returncode == 0:
+        raw = stdout.decode(errors="replace").strip()
+        lines = [l for l in raw.splitlines() if l.strip()]
+        if lines:
+            data = json.loads(lines[0])
+            if data.get("_type") not in ("playlist", "multi_video"):
+                # ── Single video — return existing format ──────────────────
+                formats = _parse_formats(data.get("formats", []))
+                return {
+                    "type": "single",
+                    "title": data.get("title", "Untitled"),
+                    "thumbnail": data.get("thumbnail"),
+                    "duration": data.get("duration"),
+                    "platform": platform,
+                    "uploader": data.get("uploader"),
+                    "formats": formats,
+                    "raw_id": data.get("id"),
+                }
 
-    raw = stdout.decode()
+    # ── Attempt 2: playlist / multi-video page ─────────────────────────────
+    proc2 = await asyncio.create_subprocess_exec(
+        *base, "--flat-playlist", "--dump-json", url,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout2, stderr2 = await proc2.communicate()
 
-    # When --flat-playlist is used yt-dlp may output multiple JSON lines (one per entry)
-    # We attempt to parse each line; if the first line looks like a playlist, collect extra fields.
-    lines = [l.strip() for l in raw.splitlines() if l.strip()]
-    if not lines:
-        raise ValueError("No data returned from yt-dlp.")
+    if proc2.returncode == 0:
+        raw2 = stdout2.decode(errors="replace").strip()
+        lines2 = [l for l in raw2.splitlines() if l.strip()]
+        if lines2:
+            first = json.loads(lines2[0])
 
-    data = json.loads(lines[0])
+            if first.get("_type") == "playlist":
+                # Playlist object with embedded entries
+                raw_entries = first.get("entries") or []
+                entries = [_parse_flat_entry(e, platform) for e in raw_entries if e]
+                page_title = first.get("title") or first.get("webpage_url") or url
+            elif len(lines2) > 1:
+                # Multiple newline-delimited flat entries
+                entries = [_parse_flat_entry(json.loads(l), platform) for l in lines2]
+                page_title = f"{PLATFORM_PATTERNS.get(platform, platform).capitalize() if platform != 'unknown' else 'Page'} playlist"
+            else:
+                # Single entry came back — treat as single
+                formats = _parse_formats(first.get("formats", []))
+                return {
+                    "type": "single",
+                    "title": first.get("title", "Untitled"),
+                    "thumbnail": first.get("thumbnail"),
+                    "duration": first.get("duration"),
+                    "platform": platform,
+                    "uploader": first.get("uploader"),
+                    "formats": formats,
+                    "raw_id": first.get("id"),
+                }
 
-    formats = _parse_formats(data.get("formats", []))
+            if entries:
+                return {
+                    "type": "multi",
+                    "page_title": page_title,
+                    "platform": platform,
+                    "count": len(entries),
+                    "entries": entries,
+                }
 
-    result: dict[str, Any] = {
-        "title": data.get("title", "Untitled"),
-        "thumbnail": data.get("thumbnail"),
-        "duration": data.get("duration"),
-        "platform": platform,
-        "uploader": data.get("uploader"),
-        "formats": formats,
-        "raw_id": data.get("id"),
-    }
+    # ── Attempt 3: BeautifulSoup HTML fallback ─────────────────────────────
+    loop = asyncio.get_event_loop()
+    bs4_entries = await loop.run_in_executor(None, _bs4_scrape_videos, url)
+    if bs4_entries:
+        return {
+            "type": "multi",
+            "page_title": url,
+            "platform": platform,
+            "count": len(bs4_entries),
+            "entries": bs4_entries,
+        }
 
-    if allow_playlist:
-        # _type == "playlist" indicates this is a playlist result
-        is_playlist = data.get("_type") == "playlist"
-        result["is_playlist"] = is_playlist
-        result["playlist_count"] = data.get("playlist_count") or (len(lines) if is_playlist else None)
-        result["playlist_title"] = data.get("title") if is_playlist else None
-
-    return result
+    # ── All attempts failed ────────────────────────────────────────────────
+    err = stderr2.decode(errors="replace") if proc2.returncode != 0 else stderr.decode(errors="replace")
+    _raise_ytdlp_error(err)
+    raise ValueError("No video found on this page.")  # unreachable but satisfies type checker
 
 
 def _parse_formats(raw_formats: list[dict]) -> list[dict]:
@@ -149,7 +245,6 @@ def _parse_formats(raw_formats: list[dict]) -> list[dict]:
             })
         elif vcodec != "none" and height and height not in seen_heights:
             seen_heights.add(height)
-            # Build a selector that forces audio merge — this is what fixes YouTube no-audio
             selector = (
                 f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]"
                 f"/bestvideo[height<={height}]+bestaudio"
@@ -235,91 +330,6 @@ async def download_video(
         raise RuntimeError("Download finished but output file not found.")
 
     return matches[0]
-
-
-async def download_playlist(
-    url: str,
-    format_id: str,
-    output_dir: str,
-    on_progress: Callable[[dict], Coroutine],
-    proxy: str | None = None,
-) -> None:
-    """Download all videos in a playlist to output_dir."""
-    platform = detect_platform(url)
-    selector = format_id or "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
-
-    args = [
-        "yt-dlp",
-        "--yes-playlist",
-        "-f", selector,
-        "--newline",
-        "--progress",
-        "--merge-output-format", "mp4",
-        "-o", str(Path(output_dir) / "%(uploader)s" / "%(title)s.%(ext)s"),
-    ]
-
-    if proxy:
-        args += ["--proxy", proxy]
-
-    args.append(url)
-
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-
-    progress_re = re.compile(
-        r"\[download\]\s+([\d.]+)%\s+of\s+[\S]+\s+at\s+([\S]+)\s+ETA\s+([\S]+)"
-    )
-
-    async for line in proc.stdout:
-        text = line.decode(errors="replace").strip()
-        match = progress_re.search(text)
-        if match:
-            await on_progress({
-                "type": "progress",
-                "percent": float(match.group(1)),
-                "speed": match.group(2),
-                "eta": match.group(3),
-            })
-
-    await proc.wait()
-
-    if proc.returncode != 0:
-        raise RuntimeError("Playlist download failed — yt-dlp exited with an error.")
-
-
-async def download_subtitles(url: str, task_id: str) -> Path | None:
-    """
-    Download subtitles for a video (auto-generated or manual).
-    Returns the path to the .srt file if found, or None.
-    """
-    output_template = str(TMP_DIR / f"{task_id}.%(ext)s")
-
-    args = [
-        "yt-dlp",
-        "--write-subs",
-        "--write-auto-subs",
-        "--sub-format", "srt",
-        "--skip-download",
-        "--no-playlist",
-        "-o", output_template,
-        url,
-    ]
-
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    await proc.communicate()
-
-    # yt-dlp names subtitle files like: <task_id>.<lang>.srt
-    matches = list(TMP_DIR.glob(f"{task_id}*.srt"))
-    if matches:
-        return matches[0]
-    return None
 
 
 async def update_ytdlp() -> str:
