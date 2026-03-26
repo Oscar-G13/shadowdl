@@ -7,7 +7,7 @@ import { PLATFORM_LABELS, PLATFORM_COLORS, formatDuration } from "@/lib/platform
 
 export function VideoPreview() {
   const { metadata } = useStore();
-  if (!metadata) return null;
+  if (!metadata || metadata.type !== "single") return null;
 
   const platformLabel = PLATFORM_LABELS[metadata.platform] ?? metadata.platform;
   const platformColor = PLATFORM_COLORS[metadata.platform] ?? "#888";

@@ -7,7 +7,7 @@ import { formatBytes } from "@/lib/platform";
 export function QualitySelector() {
   const { metadata, selectedFormat, setSelectedFormat, saveToDrive, setSaveToDrive, driveConnected } = useStore();
 
-  if (!metadata?.formats?.length) return null;
+  if (!metadata || metadata.type !== "single" || !metadata.formats?.length) return null;
 
   return (
     <motion.div

@@ -8,7 +8,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export function DownloadButton() {
   const { metadata, selectedFormat, status, saveToDrive, setStatus, setProgress, setError, setTaskId, setDriveUrl } = useStore();
 
-  if (!metadata || !selectedFormat) return null;
+  if (!metadata || metadata.type !== "single" || !selectedFormat) return null;
   if (["downloading", "uploading", "fetching", "done"].includes(status)) return null;
 
   async function handleDownload() {

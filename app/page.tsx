@@ -38,7 +38,7 @@ function DriveCallbackHandler() {
 export default function Home() {
   const { status, metadata } = useStore();
   const isIdle = status === "idle";
-  const showVideoInfo = metadata && ["ready", "downloading", "uploading", "done", "error"].includes(status);
+  const showVideoInfo = metadata && metadata.type === "single" && ["ready", "downloading", "uploading", "done", "error"].includes(status);
 
   return (
     <div className="min-h-screen flex flex-col">
