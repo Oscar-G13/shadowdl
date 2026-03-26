@@ -19,10 +19,11 @@ import { DownloadQueue } from "@/components/DownloadQueue";
 const PLATFORMS: { label: string; color: string }[] = [
   { label: "YouTube",   color: "#ff0000" },
   { label: "TikTok",    color: "#00f2ea" },
-  { label: "Instagram", color: "#e1306c" },
-  { label: "Facebook",  color: "#1877f2" },
-  { label: "Reddit",    color: "#ff4500" },
-  { label: "X",         color: "#1d9bf0" },
+  { label: "Pornhub",   color: "#ff9000" },
+  { label: "LinkedIn",  color: "#0077b5" },
+  { label: "BBC",       color: "#bb1919" },
+  { label: "Twitch",    color: "#9146ff" },
+  { label: "1800+ sites", color: "rgba(255,255,255,0.3)" },
 ];
 
 function DriveCallbackHandler() {
