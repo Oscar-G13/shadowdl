@@ -11,8 +11,11 @@ export function DownloadButton() {
   if (!metadata || metadata.type !== "single" || !selectedFormat) return null;
   if (["downloading", "uploading", "fetching", "done"].includes(status)) return null;
 
+  // Narrowed after the guards above — capture as const for use inside async closure
+  const singleMeta = metadata;
+
   async function handleDownload() {
-    if (!metadata || !selectedFormat) return;
+    if (!singleMeta || !selectedFormat) return;
     setStatus("downloading");
     setProgress(null);
     setError(null);
@@ -25,8 +28,8 @@ export function DownloadButton() {
           url: useStore.getState().url,
           format_id: selectedFormat.format_id,
           quality_label: selectedFormat.label,
-          title: metadata.title,
-          platform: metadata.platform,
+          title: singleMeta.title,
+          platform: singleMeta.platform,
           save_to_drive: saveToDrive,
         }),
       });

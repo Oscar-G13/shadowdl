@@ -13,6 +13,8 @@ import { FetchingState } from "@/components/FetchingState";
 import { DriveConnect } from "@/components/DriveConnect";
 import { HistoryPanel } from "@/components/HistoryPanel";
 import { CookiesButton } from "@/components/CookiesModal";
+import { MultiVideoList } from "@/components/MultiVideoList";
+import { DownloadQueue } from "@/components/DownloadQueue";
 
 const PLATFORMS: { label: string; color: string }[] = [
   { label: "YouTube",   color: "#ff0000" },
@@ -36,7 +38,7 @@ function DriveCallbackHandler() {
 }
 
 export default function Home() {
-  const { status, metadata } = useStore();
+  const { status, metadata, multiEntries } = useStore();
   const isIdle = status === "idle";
   const showVideoInfo = metadata && metadata.type === "single" && ["ready", "downloading", "uploading", "done", "error"].includes(status);
 
@@ -119,6 +121,26 @@ export default function Home() {
           </AnimatePresence>
 
           <ProgressTracker />
+
+          {/* Multi-video selection */}
+          <AnimatePresence>
+            {status === "selecting" && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                style={{ width: "100%", display: "flex", justifyContent: "center" }}
+              >
+                <MultiVideoList />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Download queue (always mounted, self-hides when empty) */}
+          <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
+            <DownloadQueue />
+          </div>
         </div>
       </main>
 
