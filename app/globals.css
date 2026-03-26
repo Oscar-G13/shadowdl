@@ -761,4 +761,31 @@
     border-color: rgba(0,255,255,0.35);
   }
   .field-textarea::placeholder { color: rgba(255,255,255,0.18); }
+
+  /* ── Multi-video list ────────────────────────────── */
+  .multi-entry-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .multi-entry-row:hover { background: rgba(255,255,255,0.03); }
+  .multi-entry-row.selected { background: rgba(0,255,255,0.05); }
+
+  /* ── Cookie drop zone ───────────────────────────── */
+  .drop-zone {
+    border: 1px dashed rgba(0,255,255,0.2);
+    border-radius: 12px;
+    padding: 32px 24px;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: rgba(0,255,255,0.5);
+    background: rgba(0,255,255,0.04);
+  }
 }

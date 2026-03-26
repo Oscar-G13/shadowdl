@@ -12,8 +12,16 @@ import { ProgressTracker } from "@/components/ProgressTracker";
 import { FetchingState } from "@/components/FetchingState";
 import { DriveConnect } from "@/components/DriveConnect";
 import { HistoryPanel } from "@/components/HistoryPanel";
+import { CookiesButton } from "@/components/CookiesModal";
 
-const PLATFORMS = ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X"];
+const PLATFORMS: { label: string; color: string }[] = [
+  { label: "YouTube",   color: "#ff0000" },
+  { label: "TikTok",    color: "#00f2ea" },
+  { label: "Instagram", color: "#e1306c" },
+  { label: "Facebook",  color: "#1877f2" },
+  { label: "Reddit",    color: "#ff4500" },
+  { label: "X",         color: "#1d9bf0" },
+];
 
 function DriveCallbackHandler() {
   const params = useSearchParams();
@@ -52,6 +60,7 @@ export default function Home() {
 
           {/* Right */}
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <CookiesButton />
             <HistoryPanel />
             <DriveConnect />
           </div>
@@ -80,8 +89,9 @@ export default function Home() {
                 </h1>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
                   {PLATFORMS.map((p, i) => (
-                    <span key={p} className="label-xs">
-                      {p}{i < PLATFORMS.length - 1 && <span style={{ marginLeft: 8, opacity: 0.3 }}>·</span>}
+                    <span key={p.label} className="label-xs">
+                      <span style={{ color: p.color, textShadow: `0 0 8px ${p.color}66` }}>{p.label}</span>
+                      {i < PLATFORMS.length - 1 && <span style={{ marginLeft: 8, opacity: 0.3 }}>·</span>}
                     </span>
                   ))}
                 </div>

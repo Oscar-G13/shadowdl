@@ -38,6 +38,10 @@ interface ShadowStore {
   history: HistoryItem[];
   setHistory: (h: HistoryItem[]) => void;
 
+  cookiesActive: boolean;
+  cookiesFilename: string | null;
+  setCookiesStatus: (active: boolean, filename: string | null) => void;
+
   reset: () => void;
 }
 
@@ -75,6 +79,10 @@ export const useStore = create<ShadowStore>((set) => ({
 
   history: [],
   setHistory: (history) => set({ history }),
+
+  cookiesActive: false,
+  cookiesFilename: null,
+  setCookiesStatus: (cookiesActive, cookiesFilename) => set({ cookiesActive, cookiesFilename }),
 
   reset: () =>
     set({
