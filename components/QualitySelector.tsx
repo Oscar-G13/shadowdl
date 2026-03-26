@@ -3,8 +3,6 @@
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { formatBytes } from "@/lib/platform";
-import { AIAssistant } from "./AIAssistant";
-import { PresetsBar } from "./PresetsBar";
 
 export function QualitySelector() {
   const { metadata, selectedFormat, setSelectedFormat, saveToDrive, setSaveToDrive, driveConnected } = useStore();
@@ -16,10 +14,8 @@ export function QualitySelector() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.05 }}
-      className="flex flex-col"
-      style={{ gap: "18px" }}
+      style={{ display: "flex", flexDirection: "column", gap: 18 }}
     >
-      {/* Quality pills */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <p className="label-xs" style={{ paddingLeft: 2 }}>Quality</p>
         <div className="flex flex-wrap" style={{ gap: 8 }}>
@@ -46,13 +42,6 @@ export function QualitySelector() {
         </div>
       </div>
 
-      {/* Presets */}
-      <PresetsBar />
-
-      {/* AI Assistant */}
-      <AIAssistant />
-
-      {/* Drive toggle */}
       {driveConnected && (
         <div
           className="flex items-center gap-3 cursor-pointer w-fit"
@@ -65,10 +54,7 @@ export function QualitySelector() {
           >
             <div
               className="toggle-thumb"
-              style={{
-                background: saveToDrive ? "#000" : "rgba(255,255,255,0.4)",
-                transform: saveToDrive ? "translateX(16px)" : "translateX(0px)",
-              }}
+              style={{ background: saveToDrive ? "#000" : "rgba(255,255,255,0.4)", transform: saveToDrive ? "translateX(16px)" : "translateX(0px)" }}
             />
           </div>
           <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Save to Google Drive</span>
