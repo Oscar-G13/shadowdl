@@ -43,24 +43,34 @@ def detect_platform(url: str) -> str:
     return "unknown"
 
 
-def _build_ydl_opts(platform: str, format_selector: str | None = None) -> list[str]:
+def _build_ydl_opts(
+    platform: str,
+    format_selector: str | None = None,
+    cookies_path: str | None = None,
+) -> list[str]:
     """Build yt-dlp CLI args for a given platform."""
     args = ["yt-dlp", "--no-playlist"]
 
-    # Use the provided selector (always includes audio) or the default best merge
     selector = format_selector or "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
     args += ["-f", selector]
+
+    if cookies_path and Path(cookies_path).exists():
+        args += ["--cookies", cookies_path]
 
     return args
 
 
-async def fetch_metadata(url: str, allow_playlist: bool = False) -> dict[str, Any]:
+async def fetch_metadata(url: str, allow_playlist: bool = False, cookies_path: str | None = None) -> dict[str, Any]:
     platform = detect_platform(url)
 
+    base = ["yt-dlp"]
+    if cookies_path and Path(cookies_path).exists():
+        base += ["--cookies", cookies_path]
+
     if allow_playlist:
-        args = ["yt-dlp", "--flat-playlist", "--dump-json", url]
+        args = base + ["--flat-playlist", "--dump-json", url]
     else:
-        args = ["yt-dlp", "--no-playlist", "--dump-json", url]
+        args = base + ["--no-playlist", "--dump-json", url]
 
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -175,10 +185,11 @@ async def download_video(
     task_id: str,
     on_progress: Callable[[dict], Coroutine],
     proxy: str | None = None,
+    cookies_path: str | None = None,
 ) -> Path:
     """Download video to tmp dir, streaming progress via callback."""
     platform = detect_platform(url)
-    args = _build_ydl_opts(platform, format_id)
+    args = _build_ydl_opts(platform, format_id, cookies_path=cookies_path)
 
     if proxy:
         args += ["--proxy", proxy]

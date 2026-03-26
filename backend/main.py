@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
@@ -14,6 +14,8 @@ from pydantic import BaseModel
 import database
 import downloader
 import drive
+
+COOKIES_PATH = str(Path(__file__).parent / "tmp" / "cookies.txt")
 
 app = FastAPI(title="ShadowDL API")
 
@@ -30,6 +32,7 @@ _tasks: dict[str, dict] = {}
 
 @app.on_event("startup")
 async def startup():
+    Path(__file__).parent.joinpath("tmp").mkdir(exist_ok=True)
     await database.init_db()
     asyncio.create_task(downloader.update_ytdlp())  # non-blocking, fire-and-forget
 
@@ -40,10 +43,14 @@ class MetadataRequest(BaseModel):
     url: str
 
 
+def _cookies() -> str | None:
+    return COOKIES_PATH if Path(COOKIES_PATH).exists() else None
+
+
 @app.post("/api/metadata")
 async def get_metadata(req: MetadataRequest):
     try:
-        meta = await downloader.fetch_metadata(req.url)
+        meta = await downloader.fetch_metadata(req.url, cookies_path=_cookies())
         return meta
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -81,6 +88,7 @@ async def _run_download(task_id: str, req: DownloadRequest):
             format_id=req.format_id,
             task_id=task_id,
             on_progress=on_progress,
+            cookies_path=_cookies(),
         )
         _tasks[task_id]["file_path"] = str(file_path)
 
@@ -190,6 +198,30 @@ async def drive_status():
 async def drive_disconnect():
     await drive.disconnect()
     return {"ok": True}
+
+
+# ── Cookies ────────────────────────────────────────────────────────────────────
+
+@app.post("/api/cookies/upload")
+async def upload_cookies(file: UploadFile = File(...)):
+    content = await file.read()
+    dest = Path(COOKIES_PATH)
+    dest.write_bytes(content)
+    return {"ok": True, "filename": file.filename, "size": len(content)}
+
+
+@app.delete("/api/cookies")
+async def delete_cookies():
+    Path(COOKIES_PATH).unlink(missing_ok=True)
+    return {"ok": True}
+
+
+@app.get("/api/cookies/status")
+async def cookies_status():
+    p = Path(COOKIES_PATH)
+    if p.exists():
+        return {"active": True, "filename": "cookies.txt", "size": p.stat().st_size}
+    return {"active": False, "filename": None, "size": 0}
 
 
 # ── History ────────────────────────────────────────────────────────────────────
