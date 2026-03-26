@@ -9,6 +9,21 @@ from typing import Any, Callable, Coroutine
 TMP_DIR = Path(__file__).parent / "tmp"
 TMP_DIR.mkdir(exist_ok=True)
 
+# Sent with every yt-dlp request so CDNs and news sites don't block us
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
+_BEST_QUALITY = {
+    "format_id": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+    "label": "Best Quality",
+    "ext": "mp4",
+    "filesize": None,
+    "height": None,
+}
+
 # Platform detection patterns
 PLATFORM_PATTERNS = {
     "youtube":     r"(youtube\.com|youtu\.be)",
@@ -49,7 +64,7 @@ def _build_ydl_opts(
     cookies_path: str | None = None,
 ) -> list[str]:
     """Build yt-dlp CLI args for a given platform."""
-    args = ["yt-dlp", "--no-playlist"]
+    args = ["yt-dlp", "--no-playlist", "--user-agent", USER_AGENT]
 
     selector = format_selector or "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
     args += ["-f", selector]
@@ -106,13 +121,44 @@ def _bs4_scrape_videos(url: str) -> list[dict]:
 
 
 def _raise_ytdlp_error(stderr: str) -> None:
-    if "Private video" in stderr or "This video is private" in stderr:
+    low = stderr.lower()
+    if "private video" in low or "this video is private" in low:
         raise ValueError("This video is private.")
-    if "age" in stderr.lower() and "restricted" in stderr.lower():
-        raise ValueError("Age-restricted content — try importing browser cookies.")
-    if "not supported" in stderr.lower() or "unsupported url" in stderr.lower():
+    if "age" in low and "restricted" in low:
+        raise ValueError("Age-restricted content — import your browser cookies and try again.")
+    if "403" in stderr or "401" in stderr or "http forbidden" in low or "access denied" in low:
+        raise ValueError(
+            "Access denied (403/401) — this site blocks bots. "
+            "Import your browser cookies via the Cookies button and try again."
+        )
+    if "not supported" in low or "unsupported url" in low:
         raise ValueError("URL not supported — no video found on this page.")
     raise ValueError(f"Could not fetch video info: {stderr[:300]}")
+
+
+def _single_from_data(data: dict, platform: str) -> dict[str, Any]:
+    """Build a type=single response dict from a yt-dlp JSON object."""
+    return {
+        "type": "single",
+        "title": data.get("title", "Untitled"),
+        "thumbnail": data.get("thumbnail"),
+        "duration": data.get("duration"),
+        "platform": platform,
+        "uploader": data.get("uploader"),
+        "formats": _parse_formats(data.get("formats", [])),
+        "raw_id": data.get("id"),
+    }
+
+
+async def _run_ydl(args: list[str]) -> tuple[int, str, str]:
+    """Run yt-dlp and return (returncode, stdout, stderr)."""
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
 async def fetch_metadata(
@@ -122,73 +168,55 @@ async def fetch_metadata(
 ) -> dict[str, Any]:
     platform = detect_platform(url)
 
-    base: list[str] = ["yt-dlp"]
+    base: list[str] = ["yt-dlp", "--user-agent", USER_AGENT]
     if cookies_path and Path(cookies_path).exists():
         base += ["--cookies", cookies_path]
 
-    # ── Attempt 1: single video (existing path) ────────────────────────────
-    proc = await asyncio.create_subprocess_exec(
-        *base, "--no-playlist", "--dump-json", url,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
+    last_stderr = ""
 
-    if proc.returncode == 0:
-        raw = stdout.decode(errors="replace").strip()
-        lines = [l for l in raw.splitlines() if l.strip()]
+    # ── Attempt 1: site-specific extractor, single video ──────────────────
+    rc, out, err = await _run_ydl(base + ["--no-playlist", "--dump-json", url])
+    last_stderr = err
+
+    if rc == 0:
+        lines = [l for l in out.splitlines() if l.strip()]
         if lines:
             data = json.loads(lines[0])
             if data.get("_type") not in ("playlist", "multi_video"):
-                # ── Single video — return existing format ──────────────────
-                formats = _parse_formats(data.get("formats", []))
-                return {
-                    "type": "single",
-                    "title": data.get("title", "Untitled"),
-                    "thumbnail": data.get("thumbnail"),
-                    "duration": data.get("duration"),
-                    "platform": platform,
-                    "uploader": data.get("uploader"),
-                    "formats": formats,
-                    "raw_id": data.get("id"),
-                }
+                return _single_from_data(data, platform)
 
-    # ── Attempt 2: playlist / multi-video page ─────────────────────────────
-    proc2 = await asyncio.create_subprocess_exec(
-        *base, "--flat-playlist", "--dump-json", url,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout2, stderr2 = await proc2.communicate()
+    # ── Attempt 1b: force generic extractor (news sites, custom players) ──
+    # Skipped for sites that always block bots (Reuters, paywalled sites)
+    if "401" not in err and "403" not in err and "http forbidden" not in err.lower():
+        rc1b, out1b, err1b = await _run_ydl(
+            base + ["--no-playlist", "--dump-json", "--force-generic-extractor", url]
+        )
+        if rc1b == 0:
+            lines1b = [l for l in out1b.splitlines() if l.strip()]
+            if lines1b:
+                data1b = json.loads(lines1b[0])
+                if data1b.get("_type") not in ("playlist", "multi_video"):
+                    return _single_from_data(data1b, platform)
+        last_stderr = err1b or err
 
-    if proc2.returncode == 0:
-        raw2 = stdout2.decode(errors="replace").strip()
-        lines2 = [l for l in raw2.splitlines() if l.strip()]
+    rc2, out2, err2 = await _run_ydl(base + ["--flat-playlist", "--dump-json", url])
+    if err2:
+        last_stderr = err2
+
+    if rc2 == 0:
+        lines2 = [l for l in out2.splitlines() if l.strip()]
         if lines2:
             first = json.loads(lines2[0])
 
             if first.get("_type") == "playlist":
-                # Playlist object with embedded entries
                 raw_entries = first.get("entries") or []
                 entries = [_parse_flat_entry(e, platform) for e in raw_entries if e]
-                page_title = first.get("title") or first.get("webpage_url") or url
+                page_title = first.get("title") or url
             elif len(lines2) > 1:
-                # Multiple newline-delimited flat entries
                 entries = [_parse_flat_entry(json.loads(l), platform) for l in lines2]
-                page_title = f"{PLATFORM_PATTERNS.get(platform, platform).capitalize() if platform != 'unknown' else 'Page'} playlist"
+                page_title = f"{platform.capitalize()} playlist"
             else:
-                # Single entry came back — treat as single
-                formats = _parse_formats(first.get("formats", []))
-                return {
-                    "type": "single",
-                    "title": first.get("title", "Untitled"),
-                    "thumbnail": first.get("thumbnail"),
-                    "duration": first.get("duration"),
-                    "platform": platform,
-                    "uploader": first.get("uploader"),
-                    "formats": formats,
-                    "raw_id": first.get("id"),
-                }
+                return _single_from_data(first, platform)
 
             if entries:
                 return {
@@ -212,25 +240,23 @@ async def fetch_metadata(
         }
 
     # ── All attempts failed ────────────────────────────────────────────────
-    err = stderr2.decode(errors="replace") if proc2.returncode != 0 else stderr.decode(errors="replace")
-    _raise_ytdlp_error(err)
-    raise ValueError("No video found on this page.")  # unreachable but satisfies type checker
+    _raise_ytdlp_error(last_stderr)
+    raise ValueError("No video found on this page.")
 
 
 def _parse_formats(raw_formats: list[dict]) -> list[dict]:
     """
     Return a clean, deduplicated list of user-facing format options.
-    Each format_id is a yt-dlp selector string (not a raw ID) so that
-    audio is always merged when downloading video streams.
+    Always includes "Best Quality" as the first option so the DownloadButton
+    renders even for sites that return HLS/DASH-only formats with null heights.
     """
     seen_heights: set[int] = set()
-    result = []
-
+    result: list[dict] = []
     has_audio_only = False
 
     for fmt in reversed(raw_formats):
-        vcodec = fmt.get("vcodec", "none")
-        acodec = fmt.get("acodec", "none")
+        vcodec = fmt.get("vcodec") or "none"   # treat None as "none"
+        acodec = fmt.get("acodec") or "none"
         height = fmt.get("height")
         filesize = fmt.get("filesize") or fmt.get("filesize_approx")
 
@@ -261,17 +287,9 @@ def _parse_formats(raw_formats: list[dict]) -> list[dict]:
     # Sort: highest resolution first, Audio Only last
     result.sort(key=lambda f: f.get("height") or -1, reverse=True)
 
-    # Prepend "Best Quality" as the default
-    if result:
-        result.insert(0, {
-            "format_id": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
-            "label": "Best Quality",
-            "ext": "mp4",
-            "filesize": None,
-            "height": None,
-        })
-
-    return result
+    # Always prepend "Best Quality" — this ensures the DownloadButton renders
+    # even when all formats are HLS adaptive streams with no explicit height/codec.
+    return [_BEST_QUALITY, *result]
 
 
 async def download_video(
