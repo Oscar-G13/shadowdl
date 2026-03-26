@@ -9,6 +9,74 @@ from typing import Any, Callable, Coroutine
 TMP_DIR = Path(__file__).parent / "tmp"
 TMP_DIR.mkdir(exist_ok=True)
 
+# Structured progress template — works for HTTP, HLS, DASH, and all other formats.
+# Fields use raw numbers (no spaces) so we can split safely on |.
+# fragment_index/fragment_count are used when total_bytes is unknown (HLS/DASH).
+_PROGRESS_TEMPLATE = (
+    "download:SHADOWPROG"
+    "|%(progress.downloaded_bytes)s"
+    "|%(progress.total_bytes)s"
+    "|%(progress.fragment_index)s"
+    "|%(progress.fragment_count)s"
+    "|%(progress.speed)s"
+    "|%(progress.eta)s"
+)
+_SHADOW_RE = re.compile(r"SHADOWPROG\|(\S+)\|(\S+)\|(\S+)\|(\S+)\|(\S+)\|(\S+)")
+
+
+def _parse_progress(text: str) -> dict | None:
+    """Parse a SHADOWPROG line into a progress dict, or return None."""
+    m = _SHADOW_RE.search(text)
+    if not m:
+        return None
+    downloaded_s, total_s, frag_idx_s, frag_count_s, speed_s, eta_s = m.groups()
+
+    percent: float = 0.0
+    try:
+        total = float(total_s)
+        if total > 0:
+            percent = float(downloaded_s) / total * 100.0
+    except ValueError:
+        # total_bytes unknown — fall back to fragment-based percent (HLS/DASH)
+        try:
+            frag_count = float(frag_count_s)
+            if frag_count > 0:
+                percent = float(frag_idx_s) / frag_count * 100.0
+        except ValueError:
+            return None  # no usable progress info yet
+
+    return {
+        "type": "progress",
+        "percent": round(min(percent, 100.0), 1),
+        "speed": _fmt_speed(speed_s),
+        "eta": _fmt_eta(eta_s),
+    }
+
+
+def _fmt_speed(raw: str) -> str:
+    try:
+        bps = float(raw)
+        if bps >= 1024 ** 3:
+            return f"{bps / 1024 ** 3:.1f} GB/s"
+        if bps >= 1024 ** 2:
+            return f"{bps / 1024 ** 2:.1f} MB/s"
+        if bps >= 1024:
+            return f"{bps / 1024:.1f} KB/s"
+        return f"{bps:.0f} B/s"
+    except (ValueError, TypeError):
+        return "N/A"
+
+
+def _fmt_eta(raw: str) -> str:
+    try:
+        secs = int(float(raw))
+        m, s = divmod(secs, 60)
+        h, m = divmod(m, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+    except (ValueError, TypeError):
+        return "N/A"
+
+
 # Sent with every yt-dlp request so CDNs and news sites don't block us
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -309,8 +377,9 @@ async def download_video(
 
     output_template = str(TMP_DIR / f"{task_id}.%(ext)s")
     args += [
-        "--newline",          # one progress line per update — easy to parse
+        "--newline",
         "--progress",
+        "--progress-template", _PROGRESS_TEMPLATE,  # structured output for all formats
         "--merge-output-format", "mp4",
         "-o", output_template,
         url,
@@ -322,20 +391,11 @@ async def download_video(
         stderr=asyncio.subprocess.STDOUT,
     )
 
-    progress_re = re.compile(
-        r"\[download\]\s+([\d.]+)%\s+of\s+[\S]+\s+at\s+([\S]+)\s+ETA\s+([\S]+)"
-    )
-
     async for line in proc.stdout:
         text = line.decode(errors="replace").strip()
-        match = progress_re.search(text)
-        if match:
-            await on_progress({
-                "type": "progress",
-                "percent": float(match.group(1)),
-                "speed": match.group(2),
-                "eta": match.group(3),
-            })
+        prog = _parse_progress(text)
+        if prog:
+            await on_progress(prog)
 
     await proc.wait()
 
