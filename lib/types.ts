@@ -1,10 +1,8 @@
 export type Platform =
-  | "youtube"
-  | "tiktok"
-  | "instagram"
-  | "facebook"
-  | "reddit"
-  | "twitter"
+  | "youtube" | "tiktok" | "instagram" | "facebook" | "reddit" | "twitter"
+  | "pornhub" | "xvideos" | "xnxx" | "redtube" | "linkedin"
+  | "bbc" | "cnn" | "aljazeera" | "reuters"
+  | "twitch" | "vimeo" | "dailymotion" | "bilibili" | "rumble" | "odysee" | "streamable"
   | "unknown";
 
 export interface Format {

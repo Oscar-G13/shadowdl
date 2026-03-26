@@ -11,20 +11,35 @@ TMP_DIR.mkdir(exist_ok=True)
 
 # Platform detection patterns
 PLATFORM_PATTERNS = {
-    "youtube": [r"(youtube\.com|youtu\.be)"],
-    "tiktok": [r"tiktok\.com"],
-    "instagram": [r"instagram\.com"],
-    "facebook": [r"(facebook\.com|fb\.com|fb\.watch)"],
-    "reddit": [r"reddit\.com"],
-    "twitter": [r"(twitter\.com|x\.com)"],
+    "youtube":     r"(youtube\.com|youtu\.be)",
+    "tiktok":      r"tiktok\.com",
+    "instagram":   r"instagram\.com",
+    "facebook":    r"(facebook\.com|fb\.com|fb\.watch)",
+    "reddit":      r"reddit\.com",
+    "twitter":     r"(twitter\.com|x\.com)",
+    "pornhub":     r"pornhub\.com",
+    "xvideos":     r"xvideos\.com",
+    "xnxx":        r"xnxx\.com",
+    "redtube":     r"redtube\.com",
+    "linkedin":    r"linkedin\.com",
+    "bbc":         r"bbc\.(co\.uk|com)",
+    "cnn":         r"cnn\.com",
+    "aljazeera":   r"aljazeera\.com",
+    "reuters":     r"reuters\.com",
+    "twitch":      r"twitch\.tv",
+    "vimeo":       r"vimeo\.com",
+    "dailymotion": r"dailymotion\.com",
+    "bilibili":    r"bilibili\.com",
+    "rumble":      r"rumble\.com",
+    "odysee":      r"odysee\.com",
+    "streamable":  r"streamable\.com",
 }
 
 
 def detect_platform(url: str) -> str:
-    for platform, patterns in PLATFORM_PATTERNS.items():
-        for pattern in patterns:
-            if re.search(pattern, url, re.IGNORECASE):
-                return platform
+    for platform, pattern in PLATFORM_PATTERNS.items():
+        if re.search(pattern, url, re.IGNORECASE):
+            return platform
     return "unknown"
 
 
