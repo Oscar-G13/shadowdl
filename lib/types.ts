@@ -15,19 +15,58 @@ export interface Format {
   acodec?: string;
 }
 
-export interface VideoMetadata {
+export interface SingleVideoMetadata {
+  type: "single";
   title: string;
   thumbnail: string | null;
   duration: number | null;
   platform: Platform;
   uploader: string | null;
   formats: Format[];
+  raw_id?: string;
+}
+
+export interface MultiEntry {
+  id: string;
+  url: string;
+  title: string;
+  thumbnail: string | null;
+  duration: number | null;
+  uploader: string | null;
+}
+
+export interface MultiVideoMetadata {
+  type: "multi";
+  page_title: string;
+  platform: Platform;
+  count: number;
+  entries: MultiEntry[];
+}
+
+export type VideoMetadata = SingleVideoMetadata | MultiVideoMetadata;
+
+export type QueueItemStatus = "queued" | "downloading" | "uploading" | "done" | "error";
+
+export interface QueueItem {
+  taskId: string | null;
+  entryId: string;
+  url: string;
+  title: string;
+  thumbnail: string | null;
+  platform: Platform;
+  formatId: string;
+  qualityLabel: string;
+  status: QueueItemStatus;
+  progress: ProgressInfo | null;
+  error: string | null;
+  driveUrl: string | null;
 }
 
 export type DownloadStatus =
   | "idle"
   | "fetching"
   | "ready"
+  | "selecting"
   | "downloading"
   | "uploading"
   | "done"

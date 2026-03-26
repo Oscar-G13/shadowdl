@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { DownloadStatus, Format, HistoryItem, ProgressInfo, VideoMetadata } from "./types";
+import type { DownloadStatus, Format, HistoryItem, MultiEntry, ProgressInfo, QueueItem, VideoMetadata } from "./types";
 
 interface ShadowStore {
   url: string;
@@ -41,6 +41,16 @@ interface ShadowStore {
   cookiesActive: boolean;
   cookiesFilename: string | null;
   setCookiesStatus: (active: boolean, filename: string | null) => void;
+
+  multiEntries: MultiEntry[] | null;
+  setMultiEntries: (entries: MultiEntry[] | null) => void;
+  pageTitle: string | null;
+  setPageTitle: (t: string | null) => void;
+
+  downloadQueue: QueueItem[];
+  addToQueue: (items: QueueItem[]) => void;
+  updateQueueItem: (entryId: string, patch: Partial<QueueItem>) => void;
+  clearQueue: () => void;
 
   reset: () => void;
 }
@@ -84,6 +94,21 @@ export const useStore = create<ShadowStore>((set) => ({
   cookiesFilename: null,
   setCookiesStatus: (cookiesActive, cookiesFilename) => set({ cookiesActive, cookiesFilename }),
 
+  multiEntries: null,
+  setMultiEntries: (multiEntries) => set({ multiEntries }),
+  pageTitle: null,
+  setPageTitle: (pageTitle) => set({ pageTitle }),
+
+  downloadQueue: [],
+  addToQueue: (items) => set((s) => ({ downloadQueue: [...s.downloadQueue, ...items] })),
+  updateQueueItem: (entryId, patch) =>
+    set((s) => ({
+      downloadQueue: s.downloadQueue.map((item) =>
+        item.entryId === entryId ? { ...item, ...patch } : item
+      ),
+    })),
+  clearQueue: () => set({ downloadQueue: [] }),
+
   reset: () =>
     set({
       metadata: null,
@@ -94,5 +119,8 @@ export const useStore = create<ShadowStore>((set) => ({
       driveUrl: null,
       taskId: null,
       saveToDrive: false,
+      multiEntries: null,
+      pageTitle: null,
+      downloadQueue: [],
     }),
 }));
