@@ -7,7 +7,7 @@ import { useStore } from "@/lib/store";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export function UrlInput() {
-  const { setUrl, setMetadata, setSelectedFormat, setStatus, setError, reset } = useStore();
+  const { setUrl, setMetadata, setSelectedFormat, setStatus, setError, setMultiEntries, setPageTitle, reset } = useStore();
   const [localUrl, setLocalUrl] = useState("");
 
   async function submitUrl(target: string) {
@@ -32,9 +32,15 @@ export function UrlInput() {
       }
 
       const meta = await res.json();
-      setMetadata(meta);
-      if (meta.formats?.length) setSelectedFormat(meta.formats[0]);
-      setStatus("ready");
+      if (meta.type === "multi") {
+        setMultiEntries(meta.entries);
+        setPageTitle(meta.page_title);
+        setStatus("selecting");
+      } else {
+        setMetadata(meta);
+        if (meta.formats?.length) setSelectedFormat(meta.formats[0]);
+        setStatus("ready");
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setStatus("error");
@@ -110,7 +116,7 @@ export function UrlInput() {
         className="text-center mt-3"
         style={{ fontSize: "12px", color: "rgba(255,255,255,0.18)", letterSpacing: "0.04em" }}
       >
-        Supports YouTube · TikTok · Instagram · Facebook · Reddit · X
+        YouTube · TikTok · Pornhub · LinkedIn · BBC · CNN · 1800+ sites
       </p>
     </motion.div>
   );
