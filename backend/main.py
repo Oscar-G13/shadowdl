@@ -648,3 +648,43 @@ async def studio_file(task_id: str):
     ext = task.get("ext", "mp4")
     media_type = "audio/mpeg" if ext == "mp3" else "video/mp4"
     return FileResponse(path=output, filename=Path(output).name, media_type=media_type)
+
+
+class StudioSuggestRequest(BaseModel):
+    metadata: dict = {}
+    segments: list[dict] = []
+
+
+@app.post("/api/studio/suggest")
+async def studio_suggest(req: StudioSuggestRequest):
+    task_id = str(uuid.uuid4())
+    asyncio.create_task(studio.ai_magic_suggest(req.metadata, req.segments, task_id))
+    return {"task_id": task_id}
+
+
+@app.websocket("/ws/studio/{task_id}")
+async def ws_studio_progress(websocket: WebSocket, task_id: str):
+    await websocket.accept()
+    try:
+        while True:
+            task = studio.get_task(task_id)
+            if task is None:
+                await websocket.send_json({"type": "error", "message": "Task not found."})
+                break
+            status = task.get("status", "processing")
+            percent = task.get("percent", 0)
+            step = task.get("step", "")
+            payload: dict = {"type": "progress", "status": status, "percent": percent, "step": step}
+            if status == "done":
+                payload["output"] = task.get("output")
+                payload["ext"] = task.get("ext", "mp4")
+                await websocket.send_json(payload)
+                break
+            if status == "error":
+                payload["message"] = task.get("error", "Unknown error.")
+                await websocket.send_json(payload)
+                break
+            await websocket.send_json(payload)
+            await asyncio.sleep(0.25)
+    except WebSocketDisconnect:
+        pass

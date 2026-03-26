@@ -1,19 +1,19 @@
 """
 Shadow Studio backend — Whisper transcription, subtitle processing,
-FFmpeg video editing, and magic preset operations.
+FFmpeg video editing, magic presets, and AI suggestions.
 """
 
 import asyncio
+import json
 import os
+import re as _re
 from pathlib import Path
 from openai import AsyncOpenAI
 
 TMP_DIR = Path(__file__).parent / "tmp"
 TMP_DIR.mkdir(exist_ok=True)
 
-# Studio task registry
 _studio_tasks: dict[str, dict] = {}
-
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
@@ -21,18 +21,145 @@ def get_task(task_id: str) -> dict | None:
     return _studio_tasks.get(task_id)
 
 
+# ── Duration ───────────────────────────────────────────────────────────────────
+
+async def get_video_duration(file_path: str) -> float:
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "quiet", "-print_format", "json",
+        "-show_streams", file_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    try:
+        data = json.loads(stdout)
+        for stream in data.get("streams", []):
+            if "duration" in stream:
+                return float(stream["duration"])
+    except Exception:
+        pass
+    return 0.0
+
+
+# ── FFmpeg with progress ───────────────────────────────────────────────────────
+
+async def _run_ffmpeg_with_progress(
+    cmd: list[str],
+    task_id: str,
+    duration: float,
+    out_path: Path,
+) -> tuple[int, str]:
+    """Run FFmpeg, parse stderr for time= progress, update task dict."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+    output_chunks: list[str] = []
+
+    while True:
+        chunk = await proc.stdout.read(512)
+        if not chunk:
+            break
+        text = chunk.decode(errors="replace")
+        output_chunks.append(text)
+
+        m = _re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", text)
+        if m and duration > 0:
+            h, mn, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
+            current = h * 3600 + mn * 60 + s
+            pct = min(99, int(current / duration * 100))
+            _studio_tasks[task_id]["percent"] = pct
+
+    await proc.wait()
+    tail = "".join(output_chunks)[-600:]
+    return proc.returncode, tail
+
+
+# ── CSS filter → FFmpeg filter map ────────────────────────────────────────────
+
+CSS_FILTER_FFMPEG: dict[str, str | None] = {
+    "none": None,
+    "greyscale": "hue=s=0",
+    "noir": "hue=s=0,eq=contrast=1.5:brightness=-0.07",
+    "sepia": "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131",
+    "cinematic": "eq=contrast=1.2:saturation=0.75:brightness=-0.03",
+    "vivid": "eq=saturation=1.8:contrast=1.1",
+    "neon": "hue=H=90:s=2,eq=brightness=0.05",
+    "warm": "colorbalance=rs=0.1:gs=0.05:bs=-0.15",
+    "cool": "colorbalance=rs=-0.1:gs=-0.05:bs=0.2",
+    "fade": "eq=contrast=0.85:saturation=0.7:brightness=0.05",
+    "golden": "colorbalance=rs=0.15:gs=0.05:bs=-0.2,eq=saturation=1.5",
+    "night": "eq=brightness=-0.1:contrast=1.3:saturation=0.5",
+    "summer": "eq=brightness=0.05:saturation=1.4,hue=H=10",
+    "drama": "eq=contrast=1.5:brightness=-0.05:saturation=1.2",
+    "soft": "eq=contrast=0.9:saturation=0.85:brightness=0.02",
+    "glitch": "hue=H=180:s=3,eq=contrast=1.5",
+    "vhs": "eq=contrast=1.1:saturation=1.3:brightness=-0.02,hue=H=-10",
+    "teal_orange": "colorbalance=rs=0.1:gs=-0.05:bs=-0.1,hue=H=-20,eq=saturation=1.5",
+    "matte": "eq=contrast=0.8:brightness=0.07:saturation=0.6",
+    "pop": "eq=saturation=3:contrast=1.3",
+    # Legacy names kept for backward compat
+    "vintage": "curves=vintage",
+    "bw": "hue=s=0",
+    "cinema": "eq=contrast=1.1:saturation=0.85,vignette=PI/4",
+}
+
+
+# ── AI Magic Suggest ───────────────────────────────────────────────────────────
+
+async def ai_magic_suggest(metadata: dict, segments: list[dict], task_id: str) -> dict:
+    _studio_tasks[task_id] = {"status": "analyzing"}
+
+    title = metadata.get("title", "Untitled")
+    duration = metadata.get("duration", 0)
+    platform = metadata.get("platform", "unknown")
+    transcript = " ".join(s.get("text", "") for s in segments[:60])[:3000]
+
+    prompt = f"""You are a viral content strategist. Analyze this video and suggest specific edits.
+
+Video: "{title}" ({duration}s) from {platform}
+Transcript: {transcript or "(no transcript available)"}
+
+Return ONLY valid JSON with this structure:
+{{
+  "viral_moments": [
+    {{"start": <seconds>, "end": <seconds>, "reason": "<why it is viral>"}},
+    {{"start": <seconds>, "end": <seconds>, "reason": "<why it is viral>"}}
+  ],
+  "recommended_trim": {{"start": <seconds>, "end": <seconds>, "reason": "<why>"}},
+  "recommended_platform": "<tiktok|youtube_short|instagram_reels|youtube>",
+  "caption_style": "<tiktok|bold|minimal|default>",
+  "caption_suggestion": "<opening caption text under 10 words>",
+  "hook": "<one sentence hook for description>",
+  "music_energy": "<high|medium|low>"
+}}
+
+Be specific with timestamps. If no transcript, base analysis on title and duration."""
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+        )
+        result = json.loads(response.choices[0].message.content)
+    except Exception as e:
+        result = {"error": str(e)}
+
+    _studio_tasks[task_id] = {"status": "done", "suggestions": result}
+    return result
+
+
 # ── Transcription ──────────────────────────────────────────────────────────────
 
 async def transcribe_video(file_path: str, task_id: str) -> list[dict]:
-    """
-    Extract audio from video and transcribe via OpenAI Whisper.
-    Returns list of {id, start, end, text} dicts.
-    """
-    _studio_tasks[task_id] = {"status": "extracting_audio"}
+    _studio_tasks[task_id] = {"status": "extracting_audio", "percent": 0}
 
     audio_path = TMP_DIR / f"{task_id}_studio_audio.mp3"
 
-    # Extract audio — 16kHz mono at low bitrate to stay under Whisper's 25MB limit
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-i", file_path,
         "-vn", "-ar", "16000", "-ac", "1", "-b:a", "64k",
@@ -46,7 +173,7 @@ async def transcribe_video(file_path: str, task_id: str) -> list[dict]:
         _studio_tasks[task_id] = {"status": "error", "error": "Audio extraction failed"}
         raise RuntimeError("Audio extraction failed")
 
-    _studio_tasks[task_id] = {"status": "transcribing"}
+    _studio_tasks[task_id] = {"status": "transcribing", "percent": 30}
 
     try:
         with open(audio_path, "rb") as f:
@@ -60,8 +187,8 @@ async def transcribe_video(file_path: str, task_id: str) -> list[dict]:
         audio_path.unlink(missing_ok=True)
 
     segments = []
-    raw_segments = getattr(transcript, "segments", [])
-    for i, seg in enumerate(raw_segments):
+    raw = getattr(transcript, "segments", [])
+    for i, seg in enumerate(raw):
         segments.append({
             "id": i,
             "start": round(float(seg.start), 3),
@@ -69,18 +196,16 @@ async def transcribe_video(file_path: str, task_id: str) -> list[dict]:
             "text": seg.text.strip(),
         })
 
-    _studio_tasks[task_id] = {"status": "done", "segments": segments}
+    _studio_tasks[task_id] = {"status": "done", "segments": segments, "percent": 100}
     return segments
 
 
-# ── SRT / ASS generation ───────────────────────────────────────────────────────
+# ── SRT helpers ────────────────────────────────────────────────────────────────
 
 def segments_to_srt(segments: list[dict]) -> str:
     lines = []
     for i, seg in enumerate(segments, 1):
-        start = _ts_srt(seg["start"])
-        end = _ts_srt(seg["end"])
-        lines.append(f"{i}\n{start} --> {end}\n{seg['text']}\n")
+        lines.append(f"{i}\n{_ts_srt(seg['start'])} --> {_ts_srt(seg['end'])}\n{seg['text']}\n")
     return "\n".join(lines)
 
 
@@ -92,47 +217,26 @@ def _ts_srt(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def _ts_ass(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = seconds % 60
-    return f"{h}:{m:02d}:{s:05.2f}"
-
-
 SUBTITLE_STYLES = {
-    "default": {
-        "force_style": "FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=1.5,Shadow=0,MarginV=20",
-    },
-    "tiktok": {
-        "force_style": "FontName=Arial,FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=0,MarginV=40,Alignment=2",
-    },
-    "bold": {
-        "force_style": "FontName=Impact,FontSize=34,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=4,Shadow=1,MarginV=30",
-    },
-    "minimal": {
-        "force_style": "FontName=Arial,FontSize=16,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,Shadow=0,MarginV=15",
-    },
+    "default": {"force_style": "FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=1.5,Shadow=0,MarginV=20"},
+    "tiktok":  {"force_style": "FontName=Arial,FontSize=28,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=0,MarginV=40,Alignment=2"},
+    "bold":    {"force_style": "FontName=Impact,FontSize=34,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=4,Shadow=1,MarginV=30"},
+    "minimal": {"force_style": "FontName=Arial,FontSize=16,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=4,Outline=0,Shadow=0,MarginV=15"},
 }
 
 
 # ── Subtitle burn ──────────────────────────────────────────────────────────────
 
-async def burn_subtitles(
-    file_path: str,
-    segments: list[dict],
-    style: str,
-    task_id: str,
-) -> Path:
-    _studio_tasks[task_id] = {"status": "processing"}
+async def burn_subtitles(file_path: str, segments: list[dict], style: str, task_id: str) -> Path:
+    _studio_tasks[task_id] = {"status": "processing", "percent": 0}
 
+    duration = await get_video_duration(file_path)
     srt_content = segments_to_srt(segments)
     srt_path = TMP_DIR / f"{task_id}_burn.srt"
     srt_path.write_text(srt_content, encoding="utf-8")
 
     out_path = TMP_DIR / f"{task_id}_subtitled.mp4"
     force_style = SUBTITLE_STYLES.get(style, SUBTITLE_STYLES["default"])["force_style"]
-
-    # Escape path for ffmpeg filter
     escaped = str(srt_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
     cmd = [
@@ -143,93 +247,76 @@ async def burn_subtitles(
         str(out_path), "-y",
     ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    stdout, _ = await proc.communicate()
+    rc, err = await _run_ffmpeg_with_progress(cmd, task_id, duration, out_path)
     srt_path.unlink(missing_ok=True)
 
-    if proc.returncode != 0 or not out_path.exists():
-        err = stdout.decode(errors="replace")[-400:]
-        _studio_tasks[task_id] = {"status": "error", "error": err}
-        raise RuntimeError(f"Subtitle burn failed: {err}")
+    if rc != 0 or not out_path.exists():
+        _studio_tasks[task_id] = {"status": "error", "error": err[-400:]}
+        raise RuntimeError(f"Subtitle burn failed: {err[-200:]}")
 
-    _studio_tasks[task_id] = {"status": "done", "output": str(out_path)}
+    _studio_tasks[task_id] = {"status": "done", "output": str(out_path), "percent": 100}
     return out_path
 
 
 # ── Video editor export ────────────────────────────────────────────────────────
 
 async def export_edit(file_path: str, edits: dict, task_id: str) -> Path:
-    _studio_tasks[task_id] = {"status": "processing"}
+    _studio_tasks[task_id] = {"status": "processing", "percent": 0}
+    duration = await get_video_duration(file_path)
 
-    v_filters = []
-    a_filters = []
+    v_filters: list[str] = []
+    a_filters: list[str] = []
 
     # Speed
     speed = float(edits.get("speed", 1.0))
     if speed != 1.0:
         v_filters.append(f"setpts={1/speed:.4f}*PTS")
-        # atempo only supports 0.5–2.0, chain for extremes
         if 0.5 <= speed <= 2.0:
             a_filters.append(f"atempo={speed:.2f}")
         elif speed < 0.5:
             a_filters += [f"atempo={speed/0.5:.2f}", "atempo=0.5"]
-        else:  # > 2.0
+        else:
             a_filters += ["atempo=2.0", f"atempo={speed/2.0:.2f}"]
 
-    # Crop
-    crop = edits.get("crop")
-    if crop:
-        v_filters.append(f"crop={int(crop['w'])}:{int(crop['h'])}:{int(crop['x'])}:{int(crop['y'])}")
+    # Crop ratio
+    crop_ratio = edits.get("crop")
+    if crop_ratio == "9:16":
+        v_filters.append("crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920")
+    elif crop_ratio == "1:1":
+        v_filters.append("crop=min(iw\\,ih):min(iw\\,ih):(iw-min(iw\\,ih))/2:(ih-min(iw\\,ih))/2")
+    elif crop_ratio == "16:9":
+        v_filters.append("crop=iw:iw*9/16:(ih-iw*9/16)/2:0") if False else None  # skip, usually already 16:9
 
-    # Rotate / flip
-    rotate = int(edits.get("rotate", 0))
-    if rotate == 90:
-        v_filters.append("transpose=1")
-    elif rotate == 180:
-        v_filters.append("transpose=2,transpose=2")
-    elif rotate == 270:
-        v_filters.append("transpose=2")
+    # CSS filter → FFmpeg
+    filter_id = edits.get("filter") or edits.get("color_filter")
+    if filter_id and filter_id in CSS_FILTER_FFMPEG:
+        ffmpeg_filter = CSS_FILTER_FFMPEG[filter_id]
+        if ffmpeg_filter:
+            v_filters.append(ffmpeg_filter)
 
-    if edits.get("flip_h"):
-        v_filters.append("hflip")
-    if edits.get("flip_v"):
-        v_filters.append("vflip")
-
-    # Color filter preset
-    color_filter = edits.get("color_filter")
-    color_fx = {
-        "vintage": "curves=vintage",
-        "bw": "hue=s=0",
-        "vivid": "eq=saturation=1.5:contrast=1.1",
-        "cool": "colorbalance=rs=-0.1:gs=-0.05:bs=0.15",
-        "warm": "colorbalance=rs=0.1:gs=0.05:bs=-0.1",
-        "fade": "eq=brightness=0.05:contrast=0.9:saturation=0.75",
-        "cinema": "eq=contrast=1.1:saturation=0.85,vignette=PI/4",
-    }
-    if color_filter and color_filter in color_fx:
-        v_filters.append(color_fx[color_filter])
-
-    # EQ adjustments
-    brightness = float(edits.get("brightness", 0))
-    contrast = float(edits.get("contrast", 1.0))
+    # EQ adjustments (frontend sends CSS scale: brightness=1.0 normal, contrast=1.0 normal)
+    # Convert: FFmpeg brightness = CSS brightness - 1.0
+    brightness = float(edits.get("brightness", 0))  # accept either scale
+    contrast   = float(edits.get("contrast", 1.0))
     saturation = float(edits.get("saturation", 1.0))
-    if brightness != 0 or contrast != 1.0 or saturation != 1.0:
-        v_filters.append(f"eq=brightness={brightness:.2f}:contrast={contrast:.2f}:saturation={saturation:.2f}")
 
-    # Volume / audio fades
+    # If value looks like CSS scale (brightness ~1.0 = normal), convert
+    if abs(brightness) <= 2.0 and brightness != 0:
+        brightness = brightness - 1.0  # CSS 1.0 → FFmpeg 0.0
+
+    if brightness != 0 or contrast != 1.0 or saturation != 1.0:
+        v_filters.append(f"eq=brightness={brightness:.3f}:contrast={contrast:.3f}:saturation={saturation:.3f}")
+
+    # Volume
     volume = float(edits.get("volume", 1.0))
     if volume != 1.0:
         a_filters.append(f"volume={volume:.2f}")
 
-    fade_in = float(edits.get("audio_fade_in", 0))
-    fade_out = float(edits.get("audio_fade_out", 0))
-    trim_end = edits.get("trim_end")
+    # Audio fades
     trim_start = float(edits.get("trim_start", 0))
-
+    trim_end   = edits.get("trim_end")
+    fade_in    = float(edits.get("audio_fade_in", 0))
+    fade_out   = float(edits.get("audio_fade_out", 0))
     if fade_in > 0:
         a_filters.append(f"afade=t=in:st=0:d={fade_in:.2f}")
     if fade_out > 0 and trim_end:
@@ -243,153 +330,128 @@ async def export_edit(file_path: str, edits: dict, task_id: str) -> Path:
         y = ov.get("y", "h-th-30")
         fontsize = int(ov.get("fontsize", 28))
         color = str(ov.get("color", "white"))
-        t_start = float(ov.get("start", 0))
-        t_end = float(ov.get("end", 5))
+        t_s = float(ov.get("start", 0))
+        t_e = float(ov.get("end", 5))
         v_filters.append(
             f"drawtext=text='{text}':x={x}:y={y}:fontsize={fontsize}:fontcolor={color}"
             f":shadowcolor=black:shadowx=2:shadowy=2"
-            f":enable='between(t\\,{t_start:.2f}\\,{t_end:.2f})'"
+            f":enable='between(t\\,{t_s:.2f}\\,{t_e:.2f})'"
         )
 
-    # Build ffmpeg command
+    # Build command
     out_path = TMP_DIR / f"{task_id}_edited.mp4"
     cmd = ["ffmpeg"]
-
     if trim_start > 0:
         cmd += ["-ss", str(trim_start)]
     cmd += ["-i", file_path]
     if trim_end:
         cmd += ["-to", str(float(trim_end) - trim_start)]
-
     if v_filters:
         cmd += ["-vf", ",".join(v_filters)]
     if a_filters:
         cmd += ["-af", ",".join(a_filters)]
-
     cmd += ["-c:v", "libx264", "-crf", "22", "-preset", "fast"]
     cmd += ["-c:a", "aac" if a_filters else "copy"]
     cmd += [str(out_path), "-y"]
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    stdout, _ = await proc.communicate()
+    # Adjust duration for progress tracking
+    clip_duration = (float(trim_end) - trim_start) if trim_end else duration - trim_start
+    rc, err = await _run_ffmpeg_with_progress(cmd, task_id, clip_duration / speed, out_path)
 
-    if proc.returncode != 0 or not out_path.exists():
-        err = stdout.decode(errors="replace")[-400:]
-        _studio_tasks[task_id] = {"status": "error", "error": err}
-        raise RuntimeError(f"Export failed: {err}")
+    if rc != 0 or not out_path.exists():
+        _studio_tasks[task_id] = {"status": "error", "error": err[-400:]}
+        raise RuntimeError(f"Export failed: {err[-200:]}")
 
-    _studio_tasks[task_id] = {"status": "done", "output": str(out_path)}
+    _studio_tasks[task_id] = {"status": "done", "output": str(out_path), "percent": 100}
     return out_path
 
 
 # ── Magic presets ──────────────────────────────────────────────────────────────
 
 async def magic_viral_tiktok(file_path: str, task_id: str) -> Path:
-    """Vertical crop + trim to 60s + auto-transcribe + bold subtitles."""
-    _studio_tasks[task_id] = {"status": "processing", "step": "editing"}
+    _studio_tasks[task_id] = {"status": "processing", "step": "editing", "percent": 0}
+    duration = await get_video_duration(file_path)
 
-    # Step 1: crop to vertical + trim to 60s
     edit_id = f"{task_id}_edit"
     out_edit = TMP_DIR / f"{edit_id}_edited.mp4"
-
     cmd = [
-        "ffmpeg", "-i", file_path,
-        "-to", "60",
+        "ffmpeg", "-i", file_path, "-to", "60",
         "-vf", "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920",
-        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-        "-c:a", "aac",
+        "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-c:a", "aac",
         str(out_edit), "-y",
     ]
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    await proc.communicate()
-
+    rc, _ = await _run_ffmpeg_with_progress(cmd, task_id, min(duration, 60), out_edit)
     if not out_edit.exists():
         _studio_tasks[task_id] = {"status": "error", "error": "Crop/trim failed"}
         raise RuntimeError("Crop/trim failed")
 
-    # Step 2: auto-transcribe
-    _studio_tasks[task_id] = {"status": "processing", "step": "transcribing"}
-    sub_task_id = f"{task_id}_transcribe"
+    _studio_tasks[task_id]["step"] = "transcribing"
+    _studio_tasks[task_id]["percent"] = 40
     try:
-        segments = await transcribe_video(str(out_edit), sub_task_id)
-    except Exception as e:
-        # If transcription fails, just return the edited video
-        _studio_tasks[task_id] = {"status": "done", "output": str(out_edit)}
+        segs = await transcribe_video(str(out_edit), f"{task_id}_tr")
+        _studio_tasks[task_id]["step"] = "burning_subtitles"
+        _studio_tasks[task_id]["percent"] = 70
+        result = await burn_subtitles(str(out_edit), segs, "tiktok", f"{task_id}_burn")
+        out_edit.unlink(missing_ok=True)
+        _studio_tasks[task_id] = {"status": "done", "output": str(result), "percent": 100}
+        return result
+    except Exception:
+        _studio_tasks[task_id] = {"status": "done", "output": str(out_edit), "percent": 100}
         return out_edit
-
-    # Step 3: burn tiktok-style subtitles
-    _studio_tasks[task_id] = {"status": "processing", "step": "burning_subtitles"}
-    result = await burn_subtitles(str(out_edit), segments, "tiktok", f"{task_id}_burn")
-    out_edit.unlink(missing_ok=True)
-    _studio_tasks[task_id] = {"status": "done", "output": str(result)}
-    return result
 
 
 async def magic_youtube_short(file_path: str, task_id: str) -> Path:
-    """Vertical crop + trim to 60s + default captions."""
-    _studio_tasks[task_id] = {"status": "processing", "step": "editing"}
+    _studio_tasks[task_id] = {"status": "processing", "step": "editing", "percent": 0}
+    duration = await get_video_duration(file_path)
 
     out_edit = TMP_DIR / f"{task_id}_short.mp4"
     cmd = [
-        "ffmpeg", "-i", file_path,
-        "-to", "60",
+        "ffmpeg", "-i", file_path, "-to", "60",
         "-vf", "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920",
-        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-        "-c:a", "aac",
+        "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-c:a", "aac",
         str(out_edit), "-y",
     ]
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    await proc.communicate()
-
+    await _run_ffmpeg_with_progress(cmd, task_id, min(duration, 60), out_edit)
     if not out_edit.exists():
         _studio_tasks[task_id] = {"status": "error", "error": "Processing failed"}
         raise RuntimeError("Processing failed")
 
-    _studio_tasks[task_id] = {"status": "processing", "step": "transcribing"}
-    sub_task_id = f"{task_id}_sub"
+    _studio_tasks[task_id]["step"] = "transcribing"
+    _studio_tasks[task_id]["percent"] = 50
     try:
-        segments = await transcribe_video(str(out_edit), sub_task_id)
-        result = await burn_subtitles(str(out_edit), segments, "default", f"{task_id}_burn")
+        segs = await transcribe_video(str(out_edit), f"{task_id}_sub")
+        result = await burn_subtitles(str(out_edit), segs, "default", f"{task_id}_burn")
         out_edit.unlink(missing_ok=True)
-        _studio_tasks[task_id] = {"status": "done", "output": str(result)}
+        _studio_tasks[task_id] = {"status": "done", "output": str(result), "percent": 100}
         return result
     except Exception:
-        _studio_tasks[task_id] = {"status": "done", "output": str(out_edit)}
+        _studio_tasks[task_id] = {"status": "done", "output": str(out_edit), "percent": 100}
         return out_edit
 
 
 async def magic_podcast_clean(file_path: str, task_id: str) -> Path:
-    """Extract audio, return MP3 with transcription as a bonus SRT."""
-    _studio_tasks[task_id] = {"status": "processing", "step": "extracting_audio"}
+    _studio_tasks[task_id] = {"status": "processing", "step": "extracting_audio", "percent": 0}
+    duration = await get_video_duration(file_path)
 
     out_path = TMP_DIR / f"{task_id}_podcast.mp3"
     cmd = ["ffmpeg", "-i", file_path, "-vn", "-ar", "44100", "-ac", "2", "-b:a", "192k", str(out_path), "-y"]
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    await proc.communicate()
+    await _run_ffmpeg_with_progress(cmd, task_id, duration, out_path)
 
     if not out_path.exists():
         _studio_tasks[task_id] = {"status": "error", "error": "Audio extraction failed"}
         raise RuntimeError("Audio extraction failed")
 
-    # Also transcribe
-    _studio_tasks[task_id] = {"status": "processing", "step": "transcribing"}
-    sub_task_id = f"{task_id}_sub"
+    _studio_tasks[task_id]["step"] = "transcribing"
+    _studio_tasks[task_id]["percent"] = 60
     try:
-        segments = await transcribe_video(file_path, sub_task_id)
-        srt_content = segments_to_srt(segments)
+        segs = await transcribe_video(file_path, f"{task_id}_sub")
         srt_path = TMP_DIR / f"{task_id}_podcast.srt"
-        srt_path.write_text(srt_content, encoding="utf-8")
+        srt_path.write_text(segments_to_srt(segs), encoding="utf-8")
         _studio_tasks[task_id] = {
-            "status": "done",
-            "output": str(out_path),
-            "srt_output": str(srt_path),
-            "ext": "mp3",
+            "status": "done", "output": str(out_path),
+            "srt_output": str(srt_path), "ext": "mp3", "percent": 100,
         }
     except Exception:
-        _studio_tasks[task_id] = {"status": "done", "output": str(out_path), "ext": "mp3"}
+        _studio_tasks[task_id] = {"status": "done", "output": str(out_path), "ext": "mp3", "percent": 100}
 
     return out_path

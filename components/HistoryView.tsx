@@ -199,6 +199,22 @@ export function HistoryView() {
                   </span>
                   <span className="font-mono-data" style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", flexShrink: 0 }}>{item.quality}</span>
                   <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", flexShrink: 0 }}>{date}</span>
+                  {item.url && (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title={item.url}
+                      style={{ color: "rgba(255,255,255,0.2)", transition: "color 0.15s", display: "flex", flexShrink: 0 }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = "#00ffff")}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.2)")}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                        <path d="M4.5 2H2a1 1 0 00-1 1v6a1 1 0 001 1h6a1 1 0 001-1V6.5M7 1h3v3M5.5 5.5L10 1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </a>
+                  )}
                   {item.saved_to_drive === 1 && (
                     <span className="badge badge-cyan" style={{ flexShrink: 0 }}>Drive</span>
                   )}
