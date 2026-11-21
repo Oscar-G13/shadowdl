@@ -1,0 +1,5 @@
+
+# Reviewed 2026-11-21: exact historical false positives only.
+# Public client keys, intended public media URLs, fixtures, hashes and identifiers.
+# Never add real credentials here; revoke and remove them.
+8e8ad826e78da73bc2d803c29882e41c9d9b52ea:backend/downloader.py:generic-api-key:37
