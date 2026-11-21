@@ -16,7 +16,7 @@ export function DriveConnect() {
   }, [setDriveStatus]);
 
   async function connect() {
-    const res = await fetch(`${API}/api/auth/google`);
+    const res = await fetch(`${API}/api/auth/google`, { credentials: "include" });
     const { auth_url } = await res.json();
     window.location.href = auth_url;
   }

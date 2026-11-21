@@ -26,7 +26,7 @@ cd backend && pip install -r requirements.txt && cd ..
 cp .env.example .env
 ```
 
-Fill in your Google OAuth credentials in `.env`.
+Fill in your Google OAuth credentials and a stable generated `ENCRYPTION_KEY` in `.env`. Keep both private. This is a single-user local application; see [SECURITY.md](SECURITY.md) before running it.
 
 ### 3. Run
 
@@ -35,7 +35,7 @@ Open two terminals:
 **Terminal 1 — Backend:**
 ```bash
 cd backend
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --host 127.0.0.1 --port 8000 --no-proxy-headers
 ```
 
 **Terminal 2 — Frontend:**

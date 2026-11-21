@@ -1,15 +1,19 @@
 import asyncio
 import uuid
+import secrets
+import os
+from urllib.parse import urlencode
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from security import LocalAccessOnly, validate_video_url
 
 import database
 import downloader
@@ -18,10 +22,11 @@ import drive
 COOKIES_PATH = str(Path(__file__).parent / "tmp" / "cookies.txt")
 
 app = FastAPI(title="ShadowDL API")
+app.add_middleware(LocalAccessOnly)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,13 +39,15 @@ _tasks: dict[str, dict] = {}
 async def startup():
     Path(__file__).parent.joinpath("tmp").mkdir(exist_ok=True)
     await database.init_db()
-    asyncio.create_task(downloader.update_ytdlp())  # non-blocking, fire-and-forget
+    # Dependencies are updated through the reviewed requirements lockfile.
 
 
 # ── Metadata ───────────────────────────────────────────────────────────────────
 
 class MetadataRequest(BaseModel):
-    url: str
+    url: str = Field(max_length=4096)
+
+    _validate_url = field_validator("url")(validate_video_url)
 
 
 def _cookies() -> str | None:
@@ -55,17 +62,16 @@ async def get_metadata(req: MetadataRequest):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)[:200]}")
+        raise HTTPException(status_code=500, detail="Metadata lookup failed")
 
 
 # ── Download ───────────────────────────────────────────────────────────────────
 
-class DownloadRequest(BaseModel):
-    url: str
-    format_id: str
-    quality_label: str
-    title: str
-    platform: str
+class DownloadRequest(MetadataRequest):
+    format_id: str = Field(max_length=512)
+    quality_label: str = Field(max_length=100)
+    title: str = Field(max_length=500)
+    platform: str = Field(max_length=100)
     save_to_drive: bool = False
 
 
@@ -111,7 +117,7 @@ async def _run_download(task_id: str, req: DownloadRequest):
 
     except Exception as e:
         _tasks[task_id]["status"] = "error"
-        _tasks[task_id]["error"] = str(e)
+        _tasks[task_id]["error"] = "Download failed"
 
 
 @app.websocket("/ws/progress/{task_id}")
@@ -177,23 +183,35 @@ async def cleanup_file(task_id: str):
 # ── Google Drive ───────────────────────────────────────────────────────────────
 
 @app.get("/api/auth/google")
-async def google_auth():
-    url = drive.get_auth_url()
+async def google_auth(response: Response):
+    url, state = drive.get_auth_url()
+    response.set_cookie("shadowdl_oauth_state", state, httponly=True, samesite="lax", max_age=600, path="/auth/callback")
+    response.headers["Cache-Control"] = "no-store"
     return {"auth_url": url}
 
 
 @app.get("/auth/callback")
-async def google_callback(code: str, state: str = ""):
-    email = await drive.handle_callback(code)
-    return RedirectResponse(url=f"/?drive=connected&email={email}")
+async def google_callback(request: Request, code: str, state: str = ""):
+    cookie = request.cookies.get("shadowdl_oauth_state", "")
+    if not cookie or not state or not secrets.compare_digest(cookie.encode(), state.encode()):
+        raise HTTPException(400, "Invalid authorization state")
+    try:
+        email = await drive.handle_callback(code, state)
+    except ValueError:
+        raise HTTPException(400, "Invalid or expired authorization state") from None
+    response = RedirectResponse(url="http://localhost:3000/?" + urlencode({"drive": "connected", "email": email}))
+    response.delete_cookie("shadowdl_oauth_state", path="/auth/callback")
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
+@app.get("/api/auth/status")
 @app.get("/api/drive/status")
 async def drive_status():
-    connected, email = await drive.get_status()
-    return {"connected": connected, "email": email}
+    return await drive.get_drive_status()
 
 
+@app.delete("/api/auth/google")
 @app.post("/api/drive/disconnect")
 async def drive_disconnect():
     await drive.disconnect()
@@ -204,9 +222,14 @@ async def drive_disconnect():
 
 @app.post("/api/cookies/upload")
 async def upload_cookies(file: UploadFile = File(...)):
-    content = await file.read()
+    content = await file.read(1024 * 1024 + 1)
+    if len(content) > 1024 * 1024:
+        raise HTTPException(413, "Cookies file is too large")
     dest = Path(COOKIES_PATH)
-    dest.write_bytes(content)
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(content)
     return {"ok": True, "filename": file.filename, "size": len(content)}
 
 

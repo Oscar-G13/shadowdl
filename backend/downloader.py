@@ -5,6 +5,7 @@ import re
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Coroutine
+from security import validate_video_url
 
 TMP_DIR = Path(__file__).parent / "tmp"
 TMP_DIR.mkdir(exist_ok=True)
@@ -132,7 +133,7 @@ def _build_ydl_opts(
     cookies_path: str | None = None,
 ) -> list[str]:
     """Build yt-dlp CLI args for a given platform."""
-    args = ["yt-dlp", "--no-playlist", "--user-agent", USER_AGENT]
+    args = ["yt-dlp", "--ignore-config", "--no-playlist", "--user-agent", USER_AGENT]
 
     selector = format_selector or "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
     args += ["-f", selector]
@@ -234,16 +235,17 @@ async def fetch_metadata(
     allow_playlist: bool = False,
     cookies_path: str | None = None,
 ) -> dict[str, Any]:
+    validate_video_url(url)
     platform = detect_platform(url)
 
-    base: list[str] = ["yt-dlp", "--user-agent", USER_AGENT]
+    base: list[str] = ["yt-dlp", "--ignore-config", "--user-agent", USER_AGENT]
     if cookies_path and Path(cookies_path).exists():
         base += ["--cookies", cookies_path]
 
     last_stderr = ""
 
     # ── Attempt 1: site-specific extractor, single video ──────────────────
-    rc, out, err = await _run_ydl(base + ["--no-playlist", "--dump-json", url])
+    rc, out, err = await _run_ydl(base + ["--no-playlist", "--dump-json", "--", url])
     last_stderr = err
 
     if rc == 0:
@@ -257,7 +259,7 @@ async def fetch_metadata(
     # Skipped for sites that always block bots (Reuters, paywalled sites)
     if "401" not in err and "403" not in err and "http forbidden" not in err.lower():
         rc1b, out1b, err1b = await _run_ydl(
-            base + ["--no-playlist", "--dump-json", "--force-generic-extractor", url]
+            base + ["--no-playlist", "--dump-json", "--force-generic-extractor", "--", url]
         )
         if rc1b == 0:
             lines1b = [l for l in out1b.splitlines() if l.strip()]
@@ -267,7 +269,7 @@ async def fetch_metadata(
                     return _single_from_data(data1b, platform)
         last_stderr = err1b or err
 
-    rc2, out2, err2 = await _run_ydl(base + ["--flat-playlist", "--dump-json", url])
+    rc2, out2, err2 = await _run_ydl(base + ["--flat-playlist", "--dump-json", "--", url])
     if err2:
         last_stderr = err2
 
@@ -369,6 +371,7 @@ async def download_video(
     cookies_path: str | None = None,
 ) -> Path:
     """Download video to tmp dir, streaming progress via callback."""
+    validate_video_url(url)
     platform = detect_platform(url)
     args = _build_ydl_opts(platform, format_id, cookies_path=cookies_path)
 
@@ -382,7 +385,7 @@ async def download_video(
         "--progress-template", _PROGRESS_TEMPLATE,  # structured output for all formats
         "--merge-output-format", "mp4",
         "-o", output_template,
-        url,
+        "--", url,
     ]
 
     proc = await asyncio.create_subprocess_exec(
